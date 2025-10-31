@@ -28,5 +28,6 @@
 
 ### agent调用
 #### ls/view/grep/grob基于文本读取
+https://github.com/charmbracelet/crush
 
 #### tools加载
