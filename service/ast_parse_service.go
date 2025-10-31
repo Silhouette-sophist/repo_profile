@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Silhouette-sophist/repo_profile/visitor"
+	"golang.org/x/tools/go/packages"
 )
 
 const (
@@ -47,6 +48,38 @@ func ParseSingleFile(curPkg, rFilePath, filePath string) (*visitor.FileFuncVisit
 		File:         file,
 		FileBytes:    fileBytes,
 		ImportPkgMap: make(map[string]string),
+	}
+	ast.Walk(fileFuncVisitor, file)
+	sort.Slice(fileFuncVisitor.FileFuncInfos, func(i, j int) bool {
+		return fileFuncVisitor.FileFuncInfos[i].StartPosition.OffSet < fileFuncVisitor.FileFuncInfos[j].StartPosition.OffSet
+	})
+	return fileFuncVisitor, nil
+}
+
+// ParseSingleFileWithPackageTypes 解析单个文件中的函数信息
+func ParseSingleFileWithPackageTypes(curPkg, rFilePath, filePath string, pkg *packages.Package) (*visitor.FileFuncVisitor, error) {
+	fileSet := token.NewFileSet()
+	fileBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	file, err := parser.ParseFile(fileSet, filePath, fileBytes, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	fileName := filepath.Base(filePath)
+	fileFuncVisitor := &visitor.FileFuncVisitor{
+		BaseAstInfo: visitor.BaseAstInfo{
+			RFilePath: rFilePath,
+			Pkg:       curPkg,
+			Name:      fileName,
+			Content:   string(fileBytes),
+		},
+		FileSet:      fileSet,
+		File:         file,
+		FileBytes:    fileBytes,
+		ImportPkgMap: make(map[string]string),
+		LoadPackage:  pkg,
 	}
 	ast.Walk(fileFuncVisitor, file)
 	sort.Slice(fileFuncVisitor.FileFuncInfos, func(i, j int) bool {

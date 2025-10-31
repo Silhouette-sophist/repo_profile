@@ -14,20 +14,28 @@ func TestLoadPackages(t *testing.T) {
 	// 	PkgPath:  pkgPath,
 	// 	LoadEnum: LoadAllPkg,
 	// })
-	LoadPackages(ctx, &LoadConfig{
+	packages, err := LoadPackages(ctx, &LoadConfig{
 		RepoPath: repoPath,
 		PkgPath:  pkgPath,
 		LoadEnum: LoadSpecificPkgWithChild,
 	})
+	if err != nil {
+		t.Fatalf("LoadPackages err: %v", err)
+	}
+	t.Logf("packages: %v", packages)
 }
 
 func TestLoadAllPackages(t *testing.T) {
 	ctx := context.Background()
 	repoPath := "/Users/silhouette/work-practice/repo_profile"
 	pkgPath := "github.com/Silhouette-sophist/repo_profile"
-	LoadPackages(ctx, &LoadConfig{
+	packages, err := LoadPackages(ctx, &LoadConfig{
 		RepoPath: repoPath,
 		PkgPath:  pkgPath,
 		LoadEnum: LoadCurrentRepo,
 	})
+	if err != nil {
+		t.Fatalf("LoadAllPackages err: %v", err)
+	}
+	t.Logf("packages: %v", packages)
 }

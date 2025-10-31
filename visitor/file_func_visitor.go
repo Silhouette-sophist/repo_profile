@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/token"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 type PkgStaticInfo struct {
@@ -37,6 +39,7 @@ type FileFuncVisitor struct {
 	FilePkgVars   []*VarInfo
 	FileStructs   []*StructInfo
 	ImportPkgMap  map[string]string
+	LoadPackage   *packages.Package
 }
 
 type FuncInfo struct {
@@ -180,20 +183,33 @@ func (f *FileFuncVisitor) Visit(node ast.Node) (w ast.Visitor) {
 					}
 				case *ast.Ident:
 					// 当前包变量索引，函数指针
-					if nd.Obj != nil {
-						fmt.Println(nd.Obj.Name)
-					}
-					funcTypeInfo := f.parseExprTypeInfo(nd)
-					calleeInfo := &CalleeInfo{
-						Pkg:  f.Pkg,
-						Name: funcTypeInfo,
-					}
-					calleeIndex := GenerateCalleeIndex(calleeInfo)
-					if _, ok := funcCalleeMap[calleeIndex]; !ok {
-						funcCalleeMap[calleeIndex] = calleeInfo
+					if f.LoadPackage == nil {
+						if nd.Obj != nil {
+							fmt.Println(nd.Obj.Name)
+						}
+						funcTypeInfo := f.parseExprTypeInfo(nd)
+						calleeInfo := &CalleeInfo{
+							Pkg:  f.Pkg,
+							Name: funcTypeInfo,
+						}
+						calleeIndex := GenerateCalleeIndex(calleeInfo)
+						if _, ok := funcCalleeMap[calleeIndex]; !ok {
+							funcCalleeMap[calleeIndex] = calleeInfo
+						}
+					} else {
+						if typeAndValue, ok := f.LoadPackage.TypesInfo.Defs[nd]; ok {
+							fmt.Println("yyyyyy", typeAndValue)
+						}
 					}
 				case *ast.SelectorExpr:
 					// 跨包变量索引，跨包函数指针
+					if f.LoadPackage == nil {
+
+					} else {
+						if typeAndValue, ok := f.LoadPackage.TypesInfo.Types[nd]; ok {
+							fmt.Println("xxxxxx", typeAndValue)
+						}
+					}
 				}
 				return true
 			})

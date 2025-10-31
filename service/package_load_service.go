@@ -22,7 +22,7 @@ type LoadConfig struct {
 	LoadEnum LoadEnum
 }
 
-func LoadPackages(ctx context.Context, loadConfig *LoadConfig) {
+func LoadPackages(ctx context.Context, loadConfig *LoadConfig) ([]*packages.Package, error) {
 	// 配置加载选项
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
@@ -46,10 +46,12 @@ func LoadPackages(ctx context.Context, loadConfig *LoadConfig) {
 	pkgs, err := packages.Load(cfg, loadPatterns...)
 	if err != nil {
 		fmt.Printf("加载包失败: %v\n", err)
+		return nil, err
 	}
 	// 检查加载过程中是否有错误
 	if packages.PrintErrors(pkgs) > 0 {
 		fmt.Printf("加载包过程中存在错误\n")
+		return nil, err
 	}
 	// 打印加载的包信息
 	fmt.Printf("成功加载 %d 个包\n", len(pkgs))
@@ -59,4 +61,5 @@ func LoadPackages(ctx context.Context, loadConfig *LoadConfig) {
 		fmt.Printf("Go源文件数量: %d\n", len(pkg.GoFiles))
 		fmt.Printf("依赖数量: %d\n", len(pkg.Imports))
 	}
+	return pkgs, nil
 }
