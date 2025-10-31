@@ -18,7 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     systemd-sysv \
     tzdata \
     openjdk-17-jdk \
-    # 新增 Neo4j 依赖：gnupg（用于导入密钥）、apt-transport-https（支持 HTTPS 源）
     gnupg \
     apt-transport-https \
     && ln -fs /usr/share/zoneinfo/$TZ /etc/localtime \
