@@ -1,4 +1,4 @@
-module repo_profile
+module github.com/Silhouette-sophist/repo_profile
 
 go 1.23
 

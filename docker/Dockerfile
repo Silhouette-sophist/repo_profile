@@ -1,10 +1,5 @@
-FROM hub.byted.org/compile/bytedance.golang.compile_tango_1_25_bookworm:1.0.0.2
+FROM golang:1.25
 
-# 设置代理（适配字节内网环境）
-ENV http_proxy=http://sys-proxy-rd-relay.byted.org:8118
-ENV https_proxy=http://sys-proxy-rd-relay.byted.org:8118
-
-ARG REGION=china-north-lf
 # 设置时区
 ENV TZ=Asia/Shanghai
 
@@ -18,7 +13,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     systemd-sysv \
     tzdata \
     openjdk-17-jdk \
-    # 新增 Neo4j 依赖：gnupg（用于导入密钥）、apt-transport-https（支持 HTTPS 源）
     gnupg \
     apt-transport-https \
     && ln -fs /usr/share/zoneinfo/$TZ /etc/localtime \
