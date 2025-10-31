@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/token"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 type PkgStaticInfo struct {
@@ -37,6 +39,7 @@ type FileFuncVisitor struct {
 	FilePkgVars   []*VarInfo
 	FileStructs   []*StructInfo
 	ImportPkgMap  map[string]string
+	LoadPackage   *packages.Package
 }
 
 type FuncInfo struct {
@@ -47,7 +50,14 @@ type FuncInfo struct {
 	StartPosition *BaseAstPosition
 	EndPosition   *BaseAstPosition
 	ChildCounts   int
-	RelatedPkgVar map[string]struct{}
+	RelatedPkgVar map[string][]string
+	CalleeInfos   []*CalleeInfo
+}
+
+type CalleeInfo struct {
+	Pkg      string
+	Name     string
+	Receiver *string
 }
 
 type VarInfo struct {
@@ -154,31 +164,72 @@ func (f *FileFuncVisitor) Visit(node ast.Node) (w ast.Visitor) {
 			return true
 		})
 		for _, stmt := range n.Body.List {
-			funcCallMap := make(map[string]struct{})
+			funcCalleeMap := make(map[string]*CalleeInfo)
 			ast.Inspect(stmt, func(node ast.Node) bool {
 				if node == nil {
 					return true
 				}
 				switch nd := node.(type) {
 				case *ast.CallExpr:
+					// 函数调用
 					funcTypeInfo := f.parseExprTypeInfo(nd.Fun)
-					funcCallMap[funcTypeInfo] = struct{}{}
+					calleeInfo := &CalleeInfo{
+						Pkg:  f.Pkg,
+						Name: funcTypeInfo,
+					}
+					calleeIndex := GenerateCalleeIndex(calleeInfo)
+					if _, ok := funcCalleeMap[calleeIndex]; !ok {
+						funcCalleeMap[calleeIndex] = calleeInfo
+					}
 				case *ast.Ident:
-					funcTypeInfo := f.parseExprTypeInfo(nd)
-					if _, ok := funcCallMap[funcTypeInfo]; !ok {
-						funcInfo.RelatedPkgVar[funcTypeInfo] = struct{}{}
+					// 当前包变量索引，函数指针
+					if f.LoadPackage == nil {
+						if nd.Obj != nil {
+							fmt.Println(nd.Obj.Name)
+						}
+						funcTypeInfo := f.parseExprTypeInfo(nd)
+						calleeInfo := &CalleeInfo{
+							Pkg:  f.Pkg,
+							Name: funcTypeInfo,
+						}
+						calleeIndex := GenerateCalleeIndex(calleeInfo)
+						if _, ok := funcCalleeMap[calleeIndex]; !ok {
+							funcCalleeMap[calleeIndex] = calleeInfo
+						}
+					} else {
+						if typeAndValue, ok := f.LoadPackage.TypesInfo.Defs[nd]; ok {
+							fmt.Println("yyyyyy", typeAndValue)
+						}
 					}
 				case *ast.SelectorExpr:
-					funcTypeInfo := f.parseExprTypeInfo(nd)
-					if _, ok := funcCallMap[funcTypeInfo]; !ok {
-						funcInfo.RelatedPkgVar[funcTypeInfo] = struct{}{}
+					// 跨包变量索引，跨包函数指针
+					if f.LoadPackage == nil {
+
+					} else {
+						if typeAndValue, ok := f.LoadPackage.TypesInfo.Types[nd]; ok {
+							fmt.Println("xxxxxx", typeAndValue)
+						}
 					}
 				}
 				return true
 			})
+			for _, info := range funcCalleeMap {
+				funcInfo.CalleeInfos = append(funcInfo.CalleeInfos, info)
+			}
 		}
 	}
 	return f
+}
+
+func GenerateCalleeIndex(info *CalleeInfo) string {
+	if info == nil {
+		return ""
+	}
+	if info.Receiver != nil {
+		return fmt.Sprintf("%s(%s)#%s", info.Pkg, *info.Receiver, info.Name)
+	} else {
+		return fmt.Sprintf("%s#%s", info.Pkg, info.Name)
+	}
 }
 
 func (f *FileFuncVisitor) parseAnonymousFuncInfo(funcLit *ast.FuncLit, parentFuncInfo *FuncInfo) *FuncInfo {
@@ -240,7 +291,7 @@ func (f *FileFuncVisitor) parseNameFuncInfo(funcDecl *ast.FuncDecl) *FuncInfo {
 			Line:      endPosition.Line,
 			Column:    endPosition.Column,
 		},
-		RelatedPkgVar: map[string]struct{}{},
+		RelatedPkgVar: make(map[string][]string),
 	}
 	if funcDecl.Recv != nil {
 		f.handleFileList(funcDecl.Recv.List, func(varInfo *VarInfo) {

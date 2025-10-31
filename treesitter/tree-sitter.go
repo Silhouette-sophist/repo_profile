@@ -1,11 +1,9 @@
 package treesitter
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"reflect"
 	"unsafe"
 
@@ -198,73 +196,73 @@ func getNodeContent(node *sitter.Node, code []byte) string {
 	return string(code[start:end])
 }
 
-// 核心函数：遍历目录并解析所有目标文件
-func parseDirectory(rootDir string) error {
-	// 1. 递归遍历目录（filepath.Walk 是 Go 标准库的目录遍历工具）
-	return filepath.Walk(rootDir, func(filePath string, info os.FileInfo, err error) error {
-		// 处理遍历中的错误（如权限不足）
-		if err != nil {
-			return fmt.Errorf("遍历文件 %s 失败: %w", filePath, err)
-		}
-
-		// 2. 过滤非文件（只处理普通文件，跳过目录、链接等）
-		if info.IsDir() {
-			return nil // 是目录，跳过
-		}
-
-		// 3. 过滤非目标文件（只保留 .js 文件，可根据需求修改扩展名）
-		if ext := filepath.Ext(filePath); ext != ".js" {
-			return nil // 不是目标文件，跳过
-		}
-
-		// 4. 读取文件内容（Tree-sitter 解析需要字节流）
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			return fmt.Errorf("读取文件 %s 失败: %w", filePath, err)
-		}
-
-		// 5. 初始化 Tree-sitter 解析器
-		parser := sitter.NewParser()
-		// 设置解析器的目标语言（这里是 JavaScript，替换为其他语言需改此处）
-		if err := parser.SetLanguage(getLanguage("javascript")); err != nil {
-			return fmt.Errorf("初始化 %s 解析器失败: %w", filePath, err)
-		}
-
-		// 6. 解析文件内容，生成语法树（tree_sitter.Parse 接收字节流）
-		tree := parser.Parse(nil, content)
-		defer tree.Delete() // 手动释放语法树内存（避免内存泄漏）
-
-		// 7. 处理语法树（这里示例：打印文件信息和简单的语法树结构）
-		fmt.Printf("=== 成功解析文件: %s ===\n", filePath)
-		fmt.Printf("根节点类型: %s\n", tree.RootNode().Type())        // 根节点类型（如 program，表示 JS 程序）
-		fmt.Printf("语法树是否有错误: %v\n", tree.RootNode().HasError()) // 检查解析是否有语法错误
-
-		// （可选）递归打印语法树的前两层节点（直观查看结构）
-		fmt.Println("语法树前两层结构:")
-		printNode(tree.RootNode(), 0, 2) // 0=当前层级，2=最大打印层级
-		fmt.Println()
-
-		return nil
-	})
-}
-
-// 辅助函数：递归打印语法树节点（控制打印深度，避免输出过长）
-func printNode(node *sitter.Node, currentDepth, maxDepth int) {
-	if currentDepth > maxDepth {
-		return // 超过最大深度，停止递归
-	}
-
-	// 打印节点信息：缩进（根据层级）、节点类型、起止位置
-	indent := bytes.Repeat([]byte("  "), currentDepth)
-	fmt.Printf("%s类型: %-15s | 位置: %d-%d\n",
-		indent,
-		node.Type(),
-		node.StartByte(),
-		node.EndByte(),
-	)
-
-	// 递归处理子节点
-	for i := 0; i < int(node.ChildCount()); i++ {
-		printNode(node.Child(i), currentDepth+1, maxDepth)
-	}
-}
+//// 核心函数：遍历目录并解析所有目标文件
+//func parseDirectory(rootDir string) error {
+//	// 1. 递归遍历目录（filepath.Walk 是 Go 标准库的目录遍历工具）
+//	return filepath.Walk(rootDir, func(filePath string, info os.FileInfo, err error) error {
+//		// 处理遍历中的错误（如权限不足）
+//		if err != nil {
+//			return fmt.Errorf("遍历文件 %s 失败: %w", filePath, err)
+//		}
+//
+//		// 2. 过滤非文件（只处理普通文件，跳过目录、链接等）
+//		if info.IsDir() {
+//			return nil // 是目录，跳过
+//		}
+//
+//		// 3. 过滤非目标文件（只保留 .js 文件，可根据需求修改扩展名）
+//		if ext := filepath.Ext(filePath); ext != ".js" {
+//			return nil // 不是目标文件，跳过
+//		}
+//
+//		// 4. 读取文件内容（Tree-sitter 解析需要字节流）
+//		content, err := os.ReadFile(filePath)
+//		if err != nil {
+//			return fmt.Errorf("读取文件 %s 失败: %w", filePath, err)
+//		}
+//
+//		// 5. 初始化 Tree-sitter 解析器
+//		parser := sitter.NewParser()
+//		// 设置解析器的目标语言（这里是 JavaScript，替换为其他语言需改此处）
+//		if err := parser.SetLanguage(getLanguage("javascript")); err != nil {
+//			return fmt.Errorf("初始化 %s 解析器失败: %w", filePath, err)
+//		}
+//
+//		// 6. 解析文件内容，生成语法树（tree_sitter.Parse 接收字节流）
+//		tree := parser.Parse(nil, content)
+//		defer tree.Delete() // 手动释放语法树内存（避免内存泄漏）
+//
+//		// 7. 处理语法树（这里示例：打印文件信息和简单的语法树结构）
+//		fmt.Printf("=== 成功解析文件: %s ===\n", filePath)
+//		fmt.Printf("根节点类型: %s\n", tree.RootNode().Type())        // 根节点类型（如 program，表示 JS 程序）
+//		fmt.Printf("语法树是否有错误: %v\n", tree.RootNode().HasError()) // 检查解析是否有语法错误
+//
+//		// （可选）递归打印语法树的前两层节点（直观查看结构）
+//		fmt.Println("语法树前两层结构:")
+//		printNode(tree.RootNode(), 0, 2) // 0=当前层级，2=最大打印层级
+//		fmt.Println()
+//
+//		return nil
+//	})
+//}
+//
+//// 辅助函数：递归打印语法树节点（控制打印深度，避免输出过长）
+//func printNode(node *sitter.Node, currentDepth, maxDepth int) {
+//	if currentDepth > maxDepth {
+//		return // 超过最大深度，停止递归
+//	}
+//
+//	// 打印节点信息：缩进（根据层级）、节点类型、起止位置
+//	indent := bytes.Repeat([]byte("  "), currentDepth)
+//	fmt.Printf("%s类型: %-15s | 位置: %d-%d\n",
+//		indent,
+//		node.Type(),
+//		node.StartByte(),
+//		node.EndByte(),
+//	)
+//
+//	// 递归处理子节点
+//	for i := 0; i < int(node.ChildCount()); i++ {
+//		printNode(node.Child(i), currentDepth+1, maxDepth)
+//	}
+//}
