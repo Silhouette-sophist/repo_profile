@@ -1,8 +1,4 @@
-FROM hub.byted.org/compile/bytedance.golang.compile_tango_1_25_bookworm:1.0.0.2
-
-# 设置代理（适配字节内网环境）
-ENV http_proxy=http://sys-proxy-rd-relay.byted.org:8118
-ENV https_proxy=http://sys-proxy-rd-relay.byted.org:8118
+FROM golang:1.21-bookworm
 
 ARG REGION=china-north-lf
 # 设置时区
