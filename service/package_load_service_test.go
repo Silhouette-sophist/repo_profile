@@ -7,8 +7,8 @@ import (
 
 func TestLoadPackages(t *testing.T) {
 	ctx := context.Background()
-	repoPath := "/Users/silhouette/codeworks/static_parser"
-	pkgPath := "github.com/Silhouette-sophist/static_parser/service"
+	repoPath := "/Users/silhouette/work-practice/repo_profile"
+	pkgPath := "github.com/Silhouette-sophist/repo_profile"
 	// LoadPackages(ctx, &LoadConfig{
 	// 	RepoPath: repoPath,
 	// 	PkgPath:  pkgPath,
@@ -23,11 +23,11 @@ func TestLoadPackages(t *testing.T) {
 
 func TestLoadAllPackages(t *testing.T) {
 	ctx := context.Background()
-	repoPath := "/Users/silhouette/codeworks/static_parser"
-	pkgPath := "github.com/Silhouette-sophist/static_parser/service"
+	repoPath := "/Users/silhouette/work-practice/repo_profile"
+	pkgPath := "github.com/Silhouette-sophist/repo_profile"
 	LoadPackages(ctx, &LoadConfig{
 		RepoPath: repoPath,
 		PkgPath:  pkgPath,
-		LoadEnum: LoadAllPkg,
+		LoadEnum: LoadCurrentRepo,
 	})
 }
