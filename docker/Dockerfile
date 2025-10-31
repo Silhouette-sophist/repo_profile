@@ -1,6 +1,5 @@
-FROM golang:1.21-bookworm
+FROM golang:1.25
 
-ARG REGION=china-north-lf
 # 设置时区
 ENV TZ=Asia/Shanghai
 
