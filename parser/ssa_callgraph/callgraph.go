@@ -132,6 +132,7 @@ func (p *Program) ToGraph(g *callgraph.Graph) {
 	}
 	// 3.从图中找分支链路信息
 	for function, _ := range g.Nodes {
+		analyzeFunction(function)
 		for _, block := range function.Blocks {
 			fmt.Println("block", block)
 		}
