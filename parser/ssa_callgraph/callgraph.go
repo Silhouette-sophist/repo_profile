@@ -1,10 +1,12 @@
 package ssa_callgraph
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
 
+	"github.com/Silhouette-sophist/repo_profile/zap_log"
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/callgraph/rta"
@@ -25,10 +27,10 @@ type Algo string
 
 type InitProgramArgs struct {
 	Path      string `validate:"required"`
-	Algorithm string `validate:"oneof=cha rta vta pta"`
+	Algorithm string `validate:"one of=cha rta vta pta"`
 }
 
-func (p *Program) Load(args InitProgramArgs) error {
+func (p *Program) Load(ctx context.Context, args InitProgramArgs) error {
 	p.Args = args
 	cfg := &packages.Config{
 		Mode:  packages.LoadAllSyntax,
@@ -36,18 +38,25 @@ func (p *Program) Load(args InitProgramArgs) error {
 		Dir:   args.Path,
 		Logf:  nil,
 	}
+	// 1.加载所有包的类型
 	initial, err := packages.Load(cfg, "./...")
 	if err != nil {
+		zap_log.CtxError(ctx, "failed to load initial packages %v", err)
 		return err
 	}
-	err = CheckErrors(initial)
-	if err != nil {
+	// 2.检测错误
+	if err = CheckErrors(ctx, initial); err != nil {
+		zap_log.CtxError(ctx, "failed to load initial packages %v", err)
 		return err
 	}
+	// 3.创建ssa program，并获取当前仓库主main包
 	prog, pkgs := ssautil.AllPackages(initial, 0)
 	p.RootPkgPath = GetCommonPkgPath(pkgs)
+	// 4.Build calls Package.Build for each package in prog.
 	prog.Build()
+	// 5.获取所有main包
 	mainPkgs := ssautil.MainPackages(pkgs)
+	// 6.获取静态调用图
 	var g *callgraph.Graph
 	switch args.Algorithm {
 	case "cha":
@@ -72,7 +81,9 @@ func (p *Program) Load(args InitProgramArgs) error {
 		}
 		g = result.CallGraph
 	}
+	// 7.转为本地图
 	p.Graph = ToGraph(g)
+	// 8.移除无用节点
 	p.removeMeaningLessNode()
 	return nil
 }
@@ -130,7 +141,7 @@ func (p *Program) IsTargetPkg(pkgPath string) bool {
 	return strings.HasPrefix(pkgPath, p.RootPkgPath) || strings.HasPrefix(pkgPath, p.RootPkgPath+"/")
 }
 
-func CheckErrors(pkgs []*packages.Package) error {
+func CheckErrors(ctx context.Context, pkgs []*packages.Package) error {
 	eMsg := ""
 	packages.Visit(pkgs, nil, func(pkg *packages.Package) {
 		if len(pkg.Errors) > 0 {
