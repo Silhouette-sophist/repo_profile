@@ -66,3 +66,46 @@ func getFullFunctionName(fn *ssa.Function) string {
 	funcName := getFunctionName(fn)
 	return fmt.Sprintf("%s.%s", pkgPath, funcName)
 }
+
+// analyzeFunction 分析ssa函数调用信息
+func analyzeFunction(fn *ssa.Function) {
+	// 遍历基本块
+	for _, block := range fn.Blocks {
+		// 遍历指令
+		for _, instr := range block.Instrs {
+			// 检查函数调用
+			if call, ok := instr.(*ssa.Call); ok {
+				caller := call.Call.StaticCallee()
+				if caller != nil {
+					fmt.Printf("  调用函数: %s\n", caller.Name())
+				}
+			}
+
+			// 检查结构体类型
+			switch v := instr.(type) {
+			case *ssa.FieldAddr:
+				// 访问结构体字段
+				if typ, ok := v.X.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Struct); ok {
+					fmt.Printf("  访问结构体: %s\n", typ)
+				}
+			case *ssa.Field:
+				if typ, ok := v.X.Type().Underlying().(*types.Struct); ok {
+					fmt.Printf("  访问结构体字段: %s\n", typ)
+				}
+			}
+
+			// 检查包变量（全局变量）
+			if v, ok := instr.(ssa.Value); ok {
+				if referrers := v.Referrers(); referrers != nil {
+					for _, ref := range *referrers {
+						if ext, ok := ref.(*ssa.UnOp); ok {
+							if global, ok := ext.X.(*ssa.Global); ok {
+								fmt.Printf("  使用包变量: %s\n", global.Name())
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
