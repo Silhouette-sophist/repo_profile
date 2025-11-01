@@ -3,6 +3,7 @@ package ssa_callgraph
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -21,6 +22,8 @@ type Program struct {
 	Args        InitProgramArgs
 	Graph       *Graph
 	RootPkgPath string
+	PackagePkgs []*packages.Package
+	SsaPkgs     []*ssa.Package
 }
 
 type Algo string
@@ -39,23 +42,25 @@ func (p *Program) Load(ctx context.Context, args InitProgramArgs) error {
 		Logf:  nil,
 	}
 	// 1.加载所有包的类型
-	initial, err := packages.Load(cfg, "./...")
+	pakcagesPkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
-		zap_log.CtxError(ctx, "failed to load initial packages %v", err)
+		zap_log.CtxError(ctx, "failed to load pakcagesPkgs packages %v", err)
 		return err
 	}
+	p.PackagePkgs = pakcagesPkgs
 	// 2.检测错误
-	if err = CheckErrors(ctx, initial); err != nil {
-		zap_log.CtxError(ctx, "failed to load initial packages %v", err)
+	if err = CheckErrors(ctx, pakcagesPkgs); err != nil {
+		zap_log.CtxError(ctx, "failed to load pakcagesPkgs packages %v", err)
 		return err
 	}
 	// 3.创建ssa program，并获取当前仓库主main包
-	prog, pkgs := ssautil.AllPackages(initial, 0)
-	p.RootPkgPath = GetCommonPkgPath(pkgs)
+	prog, ssaPkgs := ssautil.AllPackages(pakcagesPkgs, 0)
+	p.RootPkgPath = GetCommonPkgPath(ssaPkgs)
+	p.SsaPkgs = ssaPkgs
 	// 4.Build calls Package.Build for each package in prog.
 	prog.Build()
 	// 5.获取所有main包
-	mainPkgs := ssautil.MainPackages(pkgs)
+	mainPkgs := ssautil.MainPackages(ssaPkgs)
 	// 6.获取静态调用图
 	var g *callgraph.Graph
 	switch args.Algorithm {
@@ -82,13 +87,13 @@ func (p *Program) Load(ctx context.Context, args InitProgramArgs) error {
 		g = result.CallGraph
 	}
 	// 7.转为本地图
-	p.Graph = ToGraph(g)
+	p.ToGraph(g)
 	// 8.移除无用节点
 	p.removeMeaningLessNode()
 	return nil
 }
 
-func ToGraph(g *callgraph.Graph) *Graph {
+func (p *Program) ToGraph(g *callgraph.Graph) {
 	g.DeleteSyntheticNodes()
 	graph := &Graph{NodeMap: make(map[string]*Node)}
 	for fc, n := range g.Nodes {
@@ -99,6 +104,11 @@ func ToGraph(g *callgraph.Graph) *Graph {
 		node.Func = fc
 		node.ID = strconv.Itoa(n.ID)
 		graph.NodeMap[node.ID] = node
+		packagePath := getPackagePath(fc)
+		name := getFullFunctionName(fc)
+		functionName := getFunctionName(fc)
+		functionFile := getFunctionFile(fc, p.PackagePkgs[0])
+		fmt.Println(packagePath, functionName, name, functionFile)
 	}
 
 	for _, n := range g.Nodes {
@@ -111,7 +121,7 @@ func ToGraph(g *callgraph.Graph) *Graph {
 			graph.NodeMap[edge.CalleeID].In[edge.CallerID] = edge
 		}
 	}
-	return graph
+	p.Graph = graph
 }
 
 func GetCommonPkgPath(pkgs []*ssa.Package) string {

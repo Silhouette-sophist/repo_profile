@@ -11,7 +11,7 @@ func TestCallSite(t *testing.T) {
 	ctx := context.Background()
 	prog := Program{}
 	args := InitProgramArgs{
-		Path:      "./",
+		Path:      "./../../",
 		Algorithm: "vta",
 	}
 	err := prog.Load(ctx, args)
