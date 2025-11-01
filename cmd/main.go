@@ -4,13 +4,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/Silhouette-sophist/repo_profile/graphdb"
+	graphdb2 "github.com/Silhouette-sophist/repo_profile/dal/graphdb"
 	"github.com/Silhouette-sophist/repo_profile/zap_log"
 )
 
 func main() {
 	// 配置本地 Docker 中的默认 Neo4j
-	cfg := graphdb.Config{
+	cfg := graphdb2.Config{
 		URI:      "bolt://localhost:7687", // Docker 映射的本地地址和端口
 		Username: "neo4j",                 // 默认用户名
 		Password: "chen150928",            // 默认密码，如果你修改过请用新密码
@@ -23,14 +23,14 @@ func main() {
 
 	// 初始化全局客户端
 	background := context.Background()
-	if err := graphdb.InitGlobalClient(background, cfg); err != nil {
+	if err := graphdb2.InitGlobalClient(background, cfg); err != nil {
 		zap_log.CtxError(background, "无法连接到 Neo4j: %v", err)
 	}
 
 	// 初始化成功后即可使用客户端进行操作
 	zap_log.CtxInfo(background, "Neo4j 客户端初始化成功")
 
-	if err := graphdb.NewRepoRepository(graphdb.GetGlobalClient()).Create(background, graphdb.Repo{
+	if err := graphdb2.NewRepoRepository(graphdb2.GetGlobalClient()).Create(background, graphdb2.Repo{
 		Name:        "test2",
 		GitRepo:     "xxxx",
 		Summary:     "summary",
@@ -39,7 +39,7 @@ func main() {
 		zap_log.CtxError(background, "", err)
 	}
 	zap_log.CtxInfo(background, "Create success")
-	_, err := graphdb.NewRepoRepository(graphdb.GetGlobalClient()).GetByName(background, "test")
+	_, err := graphdb2.NewRepoRepository(graphdb2.GetGlobalClient()).GetByName(background, "test")
 	if err != nil {
 		zap_log.CtxError(background, "", err)
 	}
