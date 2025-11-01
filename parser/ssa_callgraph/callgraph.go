@@ -96,6 +96,7 @@ func (p *Program) Load(ctx context.Context, args InitProgramArgs) error {
 func (p *Program) ToGraph(g *callgraph.Graph) {
 	g.DeleteSyntheticNodes()
 	graph := &Graph{NodeMap: make(map[string]*Node)}
+	// 1.从图中获取点信息
 	for fc, n := range g.Nodes {
 		node := &Node{
 			In:  make(map[string]*Edge),
@@ -118,7 +119,7 @@ func (p *Program) ToGraph(g *callgraph.Graph) {
 		file := getFunctionFile(fc, p.PackagePkgs[0])
 		fmt.Println(packagePath, functionName, name, functionFile, file)
 	}
-
+	// 2.从图中节点中找边关系
 	for _, n := range g.Nodes {
 		for _, e := range n.Out {
 			edge := &Edge{}
@@ -127,6 +128,12 @@ func (p *Program) ToGraph(g *callgraph.Graph) {
 			edge.CalleeID = strconv.Itoa(e.Callee.ID)
 			graph.NodeMap[edge.CallerID].Out[edge.CalleeID] = edge
 			graph.NodeMap[edge.CalleeID].In[edge.CallerID] = edge
+		}
+	}
+	// 3.从图中找分支链路信息
+	for function, _ := range g.Nodes {
+		for _, block := range function.Blocks {
+			fmt.Println("block", block)
 		}
 	}
 	p.Graph = graph
