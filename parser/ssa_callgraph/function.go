@@ -3,6 +3,7 @@ package ssa_callgraph
 import (
 	"fmt"
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
@@ -77,7 +78,11 @@ func analyzeFunction(fn *ssa.Function) {
 			if call, ok := instr.(*ssa.Call); ok {
 				caller := call.Call.StaticCallee()
 				if caller != nil {
-					fmt.Printf("  调用函数: %s\n", caller.Name())
+					calleeFuncName := getFullFunctionName(caller)
+					shortName := getFunctionName(caller)
+					if strings.HasPrefix(calleeFuncName, "github.com/Silhouette-sophist/repo_profile") {
+						fmt.Printf("  调用函数: %s %s\n", calleeFuncName, shortName)
+					}
 				}
 			}
 
