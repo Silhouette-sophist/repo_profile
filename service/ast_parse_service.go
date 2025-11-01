@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Silhouette-sophist/repo_profile/visitor"
+	"github.com/Silhouette-sophist/repo_profile/parser/visitor"
 	"golang.org/x/tools/go/packages"
 )
 

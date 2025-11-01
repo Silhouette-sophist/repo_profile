@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
+	vs "github.com/Silhouette-sophist/repo_profile/parser/visitor"
 	"github.com/Silhouette-sophist/repo_profile/service"
-	vs "github.com/Silhouette-sophist/repo_profile/visitor"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"
 )
