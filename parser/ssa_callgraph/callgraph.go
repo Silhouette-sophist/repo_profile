@@ -1,10 +1,13 @@
 package ssa_callgraph
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/Silhouette-sophist/repo_profile/zap_log"
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/callgraph/rta"
@@ -19,16 +22,18 @@ type Program struct {
 	Args        InitProgramArgs
 	Graph       *Graph
 	RootPkgPath string
+	PackagePkgs []*packages.Package
+	SsaPkgs     []*ssa.Package
 }
 
 type Algo string
 
 type InitProgramArgs struct {
 	Path      string `validate:"required"`
-	Algorithm string `validate:"oneof=cha rta vta pta"`
+	Algorithm string `validate:"one of=cha rta vta pta"`
 }
 
-func (p *Program) Load(args InitProgramArgs) error {
+func (p *Program) Load(ctx context.Context, args InitProgramArgs) error {
 	p.Args = args
 	cfg := &packages.Config{
 		Mode:  packages.LoadAllSyntax,
@@ -36,18 +41,27 @@ func (p *Program) Load(args InitProgramArgs) error {
 		Dir:   args.Path,
 		Logf:  nil,
 	}
-	initial, err := packages.Load(cfg, "./...")
+	// 1.加载所有包的类型
+	pakcagesPkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
+		zap_log.CtxError(ctx, "failed to load pakcagesPkgs packages %v", err)
 		return err
 	}
-	err = CheckErrors(initial)
-	if err != nil {
+	p.PackagePkgs = pakcagesPkgs
+	// 2.检测错误
+	if err = CheckErrors(ctx, pakcagesPkgs); err != nil {
+		zap_log.CtxError(ctx, "failed to load pakcagesPkgs packages %v", err)
 		return err
 	}
-	prog, pkgs := ssautil.AllPackages(initial, 0)
-	p.RootPkgPath = GetCommonPkgPath(pkgs)
+	// 3.创建ssa program，并获取当前仓库主main包
+	prog, ssaPkgs := ssautil.AllPackages(pakcagesPkgs, 0)
+	p.RootPkgPath = GetCommonPkgPath(ssaPkgs)
+	p.SsaPkgs = ssaPkgs
+	// 4.Build calls Package.Build for each package in prog.
 	prog.Build()
-	mainPkgs := ssautil.MainPackages(pkgs)
+	// 5.获取所有main包
+	mainPkgs := ssautil.MainPackages(ssaPkgs)
+	// 6.获取静态调用图
 	var g *callgraph.Graph
 	switch args.Algorithm {
 	case "cha":
@@ -72,12 +86,14 @@ func (p *Program) Load(args InitProgramArgs) error {
 		}
 		g = result.CallGraph
 	}
-	p.Graph = ToGraph(g)
+	// 7.转为本地图
+	p.ToGraph(g)
+	// 8.移除无用节点
 	p.removeMeaningLessNode()
 	return nil
 }
 
-func ToGraph(g *callgraph.Graph) *Graph {
+func (p *Program) ToGraph(g *callgraph.Graph) {
 	g.DeleteSyntheticNodes()
 	graph := &Graph{NodeMap: make(map[string]*Node)}
 	for fc, n := range g.Nodes {
@@ -88,6 +104,19 @@ func ToGraph(g *callgraph.Graph) *Graph {
 		node.Func = fc
 		node.ID = strconv.Itoa(n.ID)
 		graph.NodeMap[node.ID] = node
+		packagePath := getPackagePath(fc)
+		name := getFullFunctionName(fc)
+		functionName := getFunctionName(fc)
+		var targetPackage *packages.Package
+		for _, pkg := range p.PackagePkgs {
+			if pkg.PkgPath == packagePath {
+				targetPackage = pkg
+				break
+			}
+		}
+		functionFile := getFunctionFile(fc, targetPackage)
+		file := getFunctionFile(fc, p.PackagePkgs[0])
+		fmt.Println(packagePath, functionName, name, functionFile, file)
 	}
 
 	for _, n := range g.Nodes {
@@ -100,7 +129,7 @@ func ToGraph(g *callgraph.Graph) *Graph {
 			graph.NodeMap[edge.CalleeID].In[edge.CallerID] = edge
 		}
 	}
-	return graph
+	p.Graph = graph
 }
 
 func GetCommonPkgPath(pkgs []*ssa.Package) string {
@@ -130,7 +159,7 @@ func (p *Program) IsTargetPkg(pkgPath string) bool {
 	return strings.HasPrefix(pkgPath, p.RootPkgPath) || strings.HasPrefix(pkgPath, p.RootPkgPath+"/")
 }
 
-func CheckErrors(pkgs []*packages.Package) error {
+func CheckErrors(ctx context.Context, pkgs []*packages.Package) error {
 	eMsg := ""
 	packages.Visit(pkgs, nil, func(pkg *packages.Package) {
 		if len(pkg.Errors) > 0 {
