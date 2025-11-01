@@ -107,8 +107,16 @@ func (p *Program) ToGraph(g *callgraph.Graph) {
 		packagePath := getPackagePath(fc)
 		name := getFullFunctionName(fc)
 		functionName := getFunctionName(fc)
-		functionFile := getFunctionFile(fc, p.PackagePkgs[0])
-		fmt.Println(packagePath, functionName, name, functionFile)
+		var targetPackage *packages.Package
+		for _, pkg := range p.PackagePkgs {
+			if pkg.PkgPath == packagePath {
+				targetPackage = pkg
+				break
+			}
+		}
+		functionFile := getFunctionFile(fc, targetPackage)
+		file := getFunctionFile(fc, p.PackagePkgs[0])
+		fmt.Println(packagePath, functionName, name, functionFile, file)
 	}
 
 	for _, n := range g.Nodes {
