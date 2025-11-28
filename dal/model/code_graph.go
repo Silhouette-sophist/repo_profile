@@ -28,7 +28,6 @@ type (
 		File      string
 		Name      string
 		Content   string
-		Hash      string
 		StartLine int32
 		EndLine   int32
 		UniqueId  string
@@ -41,7 +40,6 @@ type (
 		Name      string
 		Content   string
 		Type      string
-		Hash      string
 		StartLine int32
 		EndLine   int32
 		Receiver  *string
@@ -56,7 +54,6 @@ type (
 		File      string
 		Name      string
 		Content   string
-		Hash      string
 		StartLine int32
 		EndLine   int32
 		UniqueId  string

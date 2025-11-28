@@ -44,17 +44,18 @@ type FileFuncVisitor struct {
 
 type FuncInfo struct {
 	BaseAstInfo
-	Receiver      *VarInfo
-	Params        []*VarInfo
-	Results       []*VarInfo
-	StartPosition *BaseAstPosition
-	EndPosition   *BaseAstPosition
-	ChildCounts   int
-	RelatedPkgVar map[string][]string
-	CalleeInfos   []*CalleeInfo
+	Receiver         *VarInfo
+	Params           []*VarInfo
+	Results          []*VarInfo
+	StartPosition    *BaseAstPosition
+	EndPosition      *BaseAstPosition
+	ChildCounts      int
+	RelatedPkgVar    map[string][]*IdentifierIndex
+	RelatedCallee    map[string][]*IdentifierIndex
+	RelatedPkgStruct map[string][]*IdentifierIndex
 }
 
-type CalleeInfo struct {
+type IdentifierIndex struct {
 	Pkg      string
 	Name     string
 	Receiver *string
@@ -152,84 +153,21 @@ func (f *FileFuncVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		funcInfo := f.parseNameFuncInfo(n)
 		f.FileFuncInfos = append(f.FileFuncInfos, funcInfo)
 		// 采集内部所有匿名函数
-		ast.Inspect(n.Body, func(node ast.Node) bool {
-			if node == nil {
-				return true
-			}
-			switch nd := node.(type) {
-			case *ast.FuncLit:
-				childFuncInfo := f.parseAnonymousFuncInfo(nd, funcInfo)
-				f.FileFuncInfos = append(f.FileFuncInfos, childFuncInfo)
-			}
-			return true
-		})
-		for _, stmt := range n.Body.List {
-			funcCalleeMap := make(map[string]*CalleeInfo)
-			ast.Inspect(stmt, func(node ast.Node) bool {
+		if n.Body != nil {
+			ast.Inspect(n.Body, func(node ast.Node) bool {
 				if node == nil {
 					return true
 				}
 				switch nd := node.(type) {
-				case *ast.CallExpr:
-					// 函数调用
-					funcTypeInfo := f.parseExprTypeInfo(nd.Fun)
-					calleeInfo := &CalleeInfo{
-						Pkg:  f.Pkg,
-						Name: funcTypeInfo,
-					}
-					calleeIndex := GenerateCalleeIndex(calleeInfo)
-					if _, ok := funcCalleeMap[calleeIndex]; !ok {
-						funcCalleeMap[calleeIndex] = calleeInfo
-					}
-				case *ast.Ident:
-					// 当前包变量索引，函数指针
-					if f.LoadPackage == nil {
-						if nd.Obj != nil {
-							fmt.Println(nd.Obj.Name)
-						}
-						funcTypeInfo := f.parseExprTypeInfo(nd)
-						calleeInfo := &CalleeInfo{
-							Pkg:  f.Pkg,
-							Name: funcTypeInfo,
-						}
-						calleeIndex := GenerateCalleeIndex(calleeInfo)
-						if _, ok := funcCalleeMap[calleeIndex]; !ok {
-							funcCalleeMap[calleeIndex] = calleeInfo
-						}
-					} else {
-						if typeAndValue, ok := f.LoadPackage.TypesInfo.Defs[nd]; ok {
-							fmt.Println("yyyyyy", typeAndValue)
-						}
-					}
-				case *ast.SelectorExpr:
-					// 跨包变量索引，跨包函数指针
-					if f.LoadPackage == nil {
-
-					} else {
-						if typeAndValue, ok := f.LoadPackage.TypesInfo.Types[nd]; ok {
-							fmt.Println("xxxxxx", typeAndValue)
-						}
-					}
+				case *ast.FuncLit:
+					childFuncInfo := f.parseAnonymousFuncInfo(nd, funcInfo)
+					f.FileFuncInfos = append(f.FileFuncInfos, childFuncInfo)
 				}
 				return true
 			})
-			for _, info := range funcCalleeMap {
-				funcInfo.CalleeInfos = append(funcInfo.CalleeInfos, info)
-			}
 		}
 	}
 	return f
-}
-
-func GenerateCalleeIndex(info *CalleeInfo) string {
-	if info == nil {
-		return ""
-	}
-	if info.Receiver != nil {
-		return fmt.Sprintf("%s(%s)#%s", info.Pkg, *info.Receiver, info.Name)
-	} else {
-		return fmt.Sprintf("%s#%s", info.Pkg, info.Name)
-	}
 }
 
 func (f *FileFuncVisitor) parseAnonymousFuncInfo(funcLit *ast.FuncLit, parentFuncInfo *FuncInfo) *FuncInfo {
@@ -255,6 +193,9 @@ func (f *FileFuncVisitor) parseAnonymousFuncInfo(funcLit *ast.FuncLit, parentFun
 			Line:      endPosition.Line,
 			Column:    endPosition.Column,
 		},
+		RelatedPkgVar:    make(map[string][]*IdentifierIndex),
+		RelatedCallee:    make(map[string][]*IdentifierIndex),
+		RelatedPkgStruct: make(map[string][]*IdentifierIndex),
 	}
 	if funcLit.Type.Params != nil {
 		f.handleFileList(funcLit.Type.Params.List, func(varInfo *VarInfo) {
@@ -266,6 +207,7 @@ func (f *FileFuncVisitor) parseAnonymousFuncInfo(funcLit *ast.FuncLit, parentFun
 			funcInfo.Results = append(funcInfo.Results, varInfo)
 		})
 	}
+	f.ParseFuncBody(funcInfo, funcLit.Body)
 	return funcInfo
 }
 
@@ -291,7 +233,9 @@ func (f *FileFuncVisitor) parseNameFuncInfo(funcDecl *ast.FuncDecl) *FuncInfo {
 			Line:      endPosition.Line,
 			Column:    endPosition.Column,
 		},
-		RelatedPkgVar: make(map[string][]string),
+		RelatedPkgVar:    make(map[string][]*IdentifierIndex),
+		RelatedCallee:    make(map[string][]*IdentifierIndex),
+		RelatedPkgStruct: make(map[string][]*IdentifierIndex),
 	}
 	if funcDecl.Recv != nil {
 		f.handleFileList(funcDecl.Recv.List, func(varInfo *VarInfo) {
@@ -396,4 +340,61 @@ func (f *FileFuncVisitor) parseExprBaseType(expr ast.Expr) string {
 	default:
 		return ""
 	}
+}
+
+func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt) {
+	if blockStmt == nil {
+		return
+	}
+	ast.Inspect(blockStmt, func(node ast.Node) bool {
+		if node == nil {
+			return true
+		}
+		switch nd := node.(type) {
+		case *ast.CallExpr:
+			// todo 函数调用==区分ident和selector
+			switch funId := nd.Fun.(type) {
+			case *ast.Ident:
+				info.RelatedCallee[info.Pkg] = append(info.RelatedCallee[info.Pkg], &IdentifierIndex{
+					Name: funId.Name,
+					Pkg:  info.Pkg,
+				})
+			case *ast.SelectorExpr:
+				// 1.局部变量
+				// 2.参数或者返回值或者receiver
+				// 3.包变量
+				// 4.导入包标识
+			}
+		case *ast.Ident:
+			// todo 当前包变量索引，函数指针
+		case *ast.SelectorExpr:
+			// todo 跨包变量索引，跨包函数指针【可能要先跑一次才能确定仓内的标识符】
+		case *ast.CompositeLit:
+			// todo 函数使用结构体
+			switch structIndex := nd.Type.(type) {
+			case *ast.Ident:
+				pkg := info.Pkg
+				name := structIndex.Name
+				info.RelatedPkgStruct[pkg] = append(info.RelatedPkgStruct[pkg], &IdentifierIndex{
+					Pkg:  pkg,
+					Name: name,
+				})
+			case *ast.SelectorExpr:
+				var pkg string
+				if id, ok := structIndex.X.(*ast.Ident); ok {
+					if s, ok := f.ImportPkgMap[id.Name]; ok {
+						pkg = s
+					}
+				}
+				name := structIndex.Sel.Name
+				info.RelatedPkgStruct[pkg] = append(info.RelatedPkgStruct[pkg], &IdentifierIndex{
+					Pkg:  pkg,
+					Name: name,
+				})
+			}
+		case *ast.FuncLit:
+
+		}
+		return true
+	})
 }
