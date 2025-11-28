@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	vs "github.com/Silhouette-sophist/repo_profile/parser/visitor"
-	"github.com/Silhouette-sophist/repo_profile/service"
+	vs "github.com/Silhouette-sophist/repo_profile/internal/parser/visitor"
+	service2 "github.com/Silhouette-sophist/repo_profile/internal/service"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"
 )
@@ -22,17 +22,17 @@ import (
 type AstTypeAnalyzer struct {
 	RepoPath    string
 	RootPkg     string
-	PkgLoadMap  []*packages.Package   // ast load的类型
-	ModuleInfos []*service.ModuleInfo // ast识别的模块
+	PkgLoadMap  []*packages.Package    // ast load的类型
+	ModuleInfos []*service2.ModuleInfo // ast识别的模块
 }
 
 func (r *AstTypeAnalyzer) AnalyzeRepo(ctx context.Context) {
 	fmt.Println("AstTypeAnalyzer.AnalyzeRepo")
 	// 1.先加载仓库类型
-	loadPackages, err := service.LoadPackages(ctx, &service.LoadConfig{
+	loadPackages, err := service2.LoadPackages(ctx, &service2.LoadConfig{
 		RepoPath: r.RepoPath,
 		PkgPath:  r.RootPkg,
-		LoadEnum: service.LoadAllPkg,
+		LoadEnum: service2.LoadAllPkg,
 	})
 	if err != nil {
 		fmt.Printf("LoadAllPackages err: %v", err)
@@ -49,7 +49,7 @@ func (r *AstTypeAnalyzer) AnalyzeRepo(ctx context.Context) {
 }
 
 // ParseRepo 匹配仓库信息
-func (r *AstTypeAnalyzer) ParseRepo() ([]*service.ModuleInfo, error) {
+func (r *AstTypeAnalyzer) ParseRepo() ([]*service2.ModuleInfo, error) {
 	modules, err := r.FindAllModules()
 	if err != nil {
 		return nil, err
@@ -58,12 +58,12 @@ func (r *AstTypeAnalyzer) ParseRepo() ([]*service.ModuleInfo, error) {
 }
 
 // ParseModule 解析单个go.mod文件
-func (r *AstTypeAnalyzer) ParseModule(dir string) (*service.ModuleInfo, error) {
+func (r *AstTypeAnalyzer) ParseModule(dir string) (*service2.ModuleInfo, error) {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("ParseModule dir:%s cost: %v\n", dir, time.Since(start))
 	}()
-	info := &service.ModuleInfo{
+	info := &service2.ModuleInfo{
 		Dir:          dir,
 		PkgFuncMap:   make(map[string][]*vs.FuncInfo),
 		PkgVarMap:    make(map[string][]*vs.VarInfo),
@@ -88,7 +88,7 @@ func (r *AstTypeAnalyzer) ParseModule(dir string) (*service.ModuleInfo, error) {
 	r.AppendModuleInfo(info)
 	// 解析依赖
 	for _, req := range modeFile.Require {
-		info.Requires = append(info.Requires, service.Dependency{
+		info.Requires = append(info.Requires, service2.Dependency{
 			Path:     req.Mod.Path,
 			Version:  req.Mod.Version,
 			Indirect: req.Indirect,
@@ -96,7 +96,7 @@ func (r *AstTypeAnalyzer) ParseModule(dir string) (*service.ModuleInfo, error) {
 	}
 	// 解析替换规则
 	for _, replace := range modeFile.Replace {
-		info.Replaces = append(info.Replaces, service.ReplaceRule{
+		info.Replaces = append(info.Replaces, service2.ReplaceRule{
 			OldPath:    replace.Old.Path,
 			OldVersion: replace.Old.Version,
 			NewPath:    replace.New.Path,
@@ -113,7 +113,7 @@ func (r *AstTypeAnalyzer) ParseModule(dir string) (*service.ModuleInfo, error) {
 }
 
 // AppendModuleInfo 解析模块中的所有.go文件
-func (r *AstTypeAnalyzer) AppendModuleInfo(modInfo *service.ModuleInfo) {
+func (r *AstTypeAnalyzer) AppendModuleInfo(modInfo *service2.ModuleInfo) {
 	filepath.Walk(modInfo.Dir, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -143,7 +143,7 @@ func (r *AstTypeAnalyzer) AppendModuleInfo(modInfo *service.ModuleInfo) {
 				break
 			}
 		}
-		fileFuncVisitor, err := service.ParseSingleFileWithPackageTypes(curPkg, rFilePath, path, curPkgPackage)
+		fileFuncVisitor, err := service2.ParseSingleFileWithPackageTypes(curPkg, rFilePath, path, curPkgPackage)
 		if err != nil {
 			return err
 		}
@@ -171,8 +171,8 @@ func (r *AstTypeAnalyzer) DeductRelativeDir(parentDir, childPath string) (string
 }
 
 // ParseImportsFromDir 从目录中的所有.go文件解析导入的包
-func (r *AstTypeAnalyzer) ParseImportsFromDir(dir string) ([]service.ImportInfo, error) {
-	var imports []service.ImportInfo
+func (r *AstTypeAnalyzer) ParseImportsFromDir(dir string) ([]service2.ImportInfo, error) {
+	var imports []service2.ImportInfo
 	fset := token.NewFileSet()
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -194,7 +194,7 @@ func (r *AstTypeAnalyzer) ParseImportsFromDir(dir string) ([]service.ImportInfo,
 			if imp.Name != nil {
 				importName = &imp.Name.Name
 			}
-			imports = append(imports, service.ImportInfo{
+			imports = append(imports, service2.ImportInfo{
 				Path: importPath,
 				Name: importName,
 			})
@@ -205,8 +205,8 @@ func (r *AstTypeAnalyzer) ParseImportsFromDir(dir string) ([]service.ImportInfo,
 }
 
 // FindAllModules 递归查找目录中的所有模块
-func (r *AstTypeAnalyzer) FindAllModules() ([]*service.ModuleInfo, error) {
-	modules := make([]*service.ModuleInfo, 0)
+func (r *AstTypeAnalyzer) FindAllModules() ([]*service2.ModuleInfo, error) {
+	modules := make([]*service2.ModuleInfo, 0)
 	err := filepath.WalkDir(r.RepoPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
