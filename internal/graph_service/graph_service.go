@@ -6,46 +6,83 @@ import (
 	"strings"
 
 	"github.com/Silhouette-sophist/repo_profile/internal/dal/neo4jdb"
+	"github.com/Silhouette-sophist/repo_profile/internal/model"
+	"github.com/Silhouette-sophist/repo_profile/internal/service"
+	"github.com/Silhouette-sophist/repo_profile/zap_log"
+	"go.uber.org/zap"
 )
 
-type (
-	Declaration struct {
-		Package   string
-		Name      string
-		Content   string
-		File      *string
-		StartLine *int
-		EndLine   *int
-		UniqueId  string
+func TransferGraph(ctx context.Context, repoPath string) {
+	repoModules, err := service.ParseRepo(repoPath)
+	if err != nil {
+		zap_log.CtxError(ctx, "Failed to parse repo", err, zap.Error(err))
+		return
 	}
-	AstFunction struct {
-		Declaration
-		Receiver *string
+	graphService, err := NewGraphService(ctx)
+	if err != nil {
+		zap_log.CtxError(ctx, "Failed to create graph service", err, zap.Error(err))
+		return
 	}
-
-	AstStruct struct {
-		Declaration
+	for _, module := range repoModules {
+		zap_log.CtxInfo(ctx, "parse module", zap.String("module", module.Path))
+		declares := make([]interface{}, 0)
+		for _, infos := range module.PkgFuncMap {
+			for _, info := range infos {
+				receiver := ""
+				if info.Receiver != nil {
+					receiver = info.Receiver.Name
+				}
+				function := &model.AstFunction{
+					Declaration: model.Declaration{
+						Package:   info.Pkg,
+						Name:      info.Name,
+						File:      &info.RFilePath,
+						StartLine: &info.StartPosition.Line,
+						EndLine:   &info.EndPosition.Line,
+						Content:   info.Content,
+						UniqueId:  generateUniqueId(info.Pkg, receiver, info.Name, "AstFunction"),
+					},
+				}
+				if info.Receiver != nil {
+					function.Receiver = &info.Receiver.BaseType
+				}
+				declares = append(declares, function)
+			}
+		}
+		for _, infos := range module.PkgStructMap {
+			for _, info := range infos {
+				declares = append(declares, &model.AstStruct{
+					Declaration: model.Declaration{
+						Package:   info.Pkg,
+						Name:      info.Name,
+						File:      &info.RFilePath,
+						StartLine: &info.StartPosition.Line,
+						EndLine:   &info.EndPosition.Line,
+						Content:   info.Content,
+						UniqueId:  generateUniqueId(info.Pkg, "", info.Name, "AstStruct"),
+					},
+				})
+			}
+		}
+		for _, infos := range module.PkgVarMap {
+			for _, info := range infos {
+				declares = append(declares, &model.AstVariable{
+					Declaration: model.Declaration{
+						Package:  info.Pkg,
+						Name:     info.Name,
+						File:     &info.RFilePath,
+						Content:  info.Content,
+						UniqueId: generateUniqueId(info.Pkg, "", info.Name, "AstVariable"),
+					},
+				})
+			}
+		}
+		if err := graphService.BatchCreateNodes(ctx, declares); err != nil {
+			zap_log.CtxError(ctx, "Failed to create nodes", err, zap.Error(err))
+			return
+		}
 	}
-
-	AstVariable struct {
-		Declaration
-	}
-
-	BaseRelation struct {
-		SourceElementId string
-		TargetElementId string
-		RelationType    string
-	}
-
-	RelationType string
-)
-
-const (
-	INVOKE     RelationType = "INVOKE"
-	REFERENCE  RelationType = "REFERENCE"
-	ASSOCIATE  RelationType = "ASSOCIATE"
-	DEPENDENCE RelationType = "DEPENDENCE"
-)
+}
 
 // GraphService 处理图数据库操作
 type GraphService struct {
@@ -78,22 +115,15 @@ func (gs *GraphService) BatchCreateNodes(ctx context.Context, nodes []interface{
 	if len(nodes) == 0 {
 		return nil
 	}
-
 	// 构建 CYPHER 查询
 	var cypherParts []string
 	params := make(map[string]interface{})
-
 	for i, node := range nodes {
 		var label string
 		nodeProps := make(map[string]interface{})
-
 		switch n := node.(type) {
-		case *AstFunction:
+		case *model.AstFunction:
 			label = "AstFunction"
-			receiver := ""
-			if n.Receiver != nil {
-				receiver = *n.Receiver
-			}
 			nodeProps = map[string]interface{}{
 				"package":   n.Package,
 				"name":      n.Name,
@@ -101,11 +131,10 @@ func (gs *GraphService) BatchCreateNodes(ctx context.Context, nodes []interface{
 				"file":      n.File,
 				"startLine": n.StartLine,
 				"endLine":   n.EndLine,
-				"uniqueId":  generateUniqueId(n.Package, receiver, n.Name, label),
+				"uniqueId":  n.UniqueId,
 				"receiver":  n.Receiver,
 			}
-
-		case *AstStruct:
+		case *model.AstStruct:
 			label = "AstStruct"
 			nodeProps = map[string]interface{}{
 				"package":   n.Package,
@@ -114,9 +143,9 @@ func (gs *GraphService) BatchCreateNodes(ctx context.Context, nodes []interface{
 				"file":      n.File,
 				"startLine": n.StartLine,
 				"endLine":   n.EndLine,
-				"uniqueId":  generateUniqueId(n.Package, "", n.Name, label),
+				"uniqueId":  n.UniqueId,
 			}
-		case *AstVariable:
+		case *model.AstVariable:
 			label = "AstVariable"
 			nodeProps = map[string]interface{}{
 				"package":   n.Package,
@@ -125,17 +154,18 @@ func (gs *GraphService) BatchCreateNodes(ctx context.Context, nodes []interface{
 				"file":      n.File,
 				"startLine": n.StartLine,
 				"endLine":   n.EndLine,
-				"uniqueId":  generateUniqueId(n.Package, "", n.Name, label),
+				"uniqueId":  n.UniqueId,
 			}
 		default:
 			return fmt.Errorf("unsupported node type: %T", node)
 		}
 		paramKey := fmt.Sprintf("node%d", i)
+		nodeVar := fmt.Sprintf("n%d", i) // 使用唯一的节点变量名
 		params[paramKey] = nodeProps
-		// 使用 MERGE 避免重复创建
+		// 使用唯一的变量名避免冲突
 		cypherParts = append(cypherParts,
-			fmt.Sprintf(`MERGE (n:%s {uniqueId: $%s.uniqueId}) 
-				SET n = $%s`, label, paramKey, paramKey))
+			fmt.Sprintf(`MERGE (%s:%s {uniqueId: $%s.uniqueId}) 
+                SET %s = $%s`, nodeVar, label, paramKey, nodeVar, paramKey))
 	}
 	cypher := strings.Join(cypherParts, "\n")
 	_, err := gs.connector.ExecuteCypher(ctx, cypher, params)
@@ -143,7 +173,7 @@ func (gs *GraphService) BatchCreateNodes(ctx context.Context, nodes []interface{
 }
 
 // BatchCreateRelations 批量创建关系
-func (gs *GraphService) BatchCreateRelations(ctx context.Context, relations []BaseRelation) error {
+func (gs *GraphService) BatchCreateRelations(ctx context.Context, relations []model.BaseRelation) error {
 	if len(relations) == 0 {
 		return nil
 	}
@@ -171,7 +201,7 @@ func (gs *GraphService) BatchCreateRelations(ctx context.Context, relations []Ba
 }
 
 // BatchImport 批量导入节点和关系
-func (gs *GraphService) BatchImport(ctx context.Context, nodes []interface{}, relations []BaseRelation) error {
+func (gs *GraphService) BatchImport(ctx context.Context, nodes []interface{}, relations []model.BaseRelation) error {
 	// 先创建节点
 	if err := gs.BatchCreateNodes(ctx, nodes); err != nil {
 		return fmt.Errorf("failed to create nodes: %w", err)
