@@ -79,14 +79,16 @@ func TransferGraph(ctx context.Context, repoPath string) {
 				})
 			}
 		}
-		datas, err := graphService.BatchCreateNodesWithMapping(ctx, declares)
+		uniqueIdMap, err := graphService.BatchCreateNodesWithMapping(ctx, declares)
 		if err != nil {
 			zap_log.CtxError(ctx, "Failed to create nodes", err, zap.Error(err))
 			return
 		}
-		for id, data := range datas {
+		for id, data := range uniqueIdMap {
 			fmt.Println(id, data)
 		}
+		// 补充边关系 uniqueIdMap
+
 	}
 }
 
