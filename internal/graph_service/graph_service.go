@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Silhouette-sophist/repo_profile/internal/dal/neo4jdb"
 	"github.com/Silhouette-sophist/repo_profile/internal/model"
 	"github.com/Silhouette-sophist/repo_profile/internal/service"
 	"github.com/Silhouette-sophist/repo_profile/zap_log"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"go.uber.org/zap"
 )
 
@@ -77,9 +79,13 @@ func TransferGraph(ctx context.Context, repoPath string) {
 				})
 			}
 		}
-		if err := graphService.BatchCreateNodes(ctx, declares); err != nil {
+		datas, err := graphService.BatchCreateNodesWithMapping(ctx, declares)
+		if err != nil {
 			zap_log.CtxError(ctx, "Failed to create nodes", err, zap.Error(err))
 			return
+		}
+		for id, data := range datas {
+			fmt.Println(id, data)
 		}
 	}
 }
@@ -87,6 +93,9 @@ func TransferGraph(ctx context.Context, repoPath string) {
 // GraphService 处理图数据库操作
 type GraphService struct {
 	connector *neo4jdb.Neo4jConnector
+	// 缓存uniqueId到elementId的映射
+	idMap     sync.Map
+	batchSize int
 }
 
 // NewGraphService 创建新的图服务实例
@@ -110,17 +119,21 @@ func generateUniqueId(packageName, receiver, name, label string) string {
 	return fmt.Sprintf("%s:%s:%s:%s", packageName, receiver, name, label)
 }
 
-// BatchCreateNodes 批量创建节点
-func (gs *GraphService) BatchCreateNodes(ctx context.Context, nodes []interface{}) error {
+// BatchCreateNodesWithMapping 批量创建节点并返回uniqueId到elementId的映射
+func (gs *GraphService) BatchCreateNodesWithMapping(ctx context.Context, nodes []interface{}) (map[string]string, error) {
 	if len(nodes) == 0 {
-		return nil
+		return map[string]string{}, nil
 	}
-	// 构建 CYPHER 查询
-	var cypherParts []string
+
+	// 构建参数和Cypher语句
 	params := make(map[string]interface{})
+	var mergeClauses []string
+	var returnClauses []string
+
 	for i, node := range nodes {
 		var label string
 		nodeProps := make(map[string]interface{})
+
 		switch n := node.(type) {
 		case *model.AstFunction:
 			label = "AstFunction"
@@ -157,19 +170,47 @@ func (gs *GraphService) BatchCreateNodes(ctx context.Context, nodes []interface{
 				"uniqueId":  n.UniqueId,
 			}
 		default:
-			return fmt.Errorf("unsupported node type: %T", node)
+			return nil, fmt.Errorf("unsupported node type: %T", node)
 		}
 		paramKey := fmt.Sprintf("node%d", i)
-		nodeVar := fmt.Sprintf("n%d", i) // 使用唯一的节点变量名
+		nodeVar := fmt.Sprintf("n%d", i)
 		params[paramKey] = nodeProps
-		// 使用唯一的变量名避免冲突
-		cypherParts = append(cypherParts,
+		// MERGE并设置属性
+		mergeClauses = append(mergeClauses,
 			fmt.Sprintf(`MERGE (%s:%s {uniqueId: $%s.uniqueId}) 
-                SET %s = $%s`, nodeVar, label, paramKey, nodeVar, paramKey))
+				SET %s = $%s`, nodeVar, label, paramKey, nodeVar, paramKey))
+		// 返回每个节点的uniqueId和elementId
+		returnClauses = append(returnClauses,
+			fmt.Sprintf("%s.uniqueId AS uniqueId%d, elementId(%s) AS elementId%d",
+				nodeVar, i, nodeVar, i))
 	}
-	cypher := strings.Join(cypherParts, "\n")
-	_, err := gs.connector.ExecuteCypher(ctx, cypher, params)
-	return err
+	// 构建完整的Cypher查询
+	cypher := strings.Join(mergeClauses, "\n") + "\nRETURN " + strings.Join(returnClauses, ", ")
+	// 执行查询
+	session := gs.connector.Driver.NewSession(ctx, neo4j.SessionConfig{})
+	defer session.Close(ctx)
+	result, err := session.Run(ctx, cypher, params)
+	if err != nil {
+		return nil, err
+	}
+	// 解析结果，构建映射
+	idMapping := make(map[string]string)
+	if record, err := result.Single(ctx); err == nil {
+		for i := range nodes {
+			uniqueIdKey := fmt.Sprintf("uniqueId%d", i)
+			elementIdKey := fmt.Sprintf("elementId%d", i)
+
+			if uniqueId, ok := record.Get(uniqueIdKey); ok {
+				if elementId, ok := record.Get(elementIdKey); ok {
+					idMapping[uniqueId.(string)] = elementId.(string)
+					// 更新缓存
+					gs.idMap.Store(uniqueId.(string), elementId.(string))
+				}
+			}
+		}
+	}
+
+	return idMapping, nil
 }
 
 // BatchCreateRelations 批量创建关系
@@ -203,7 +244,7 @@ func (gs *GraphService) BatchCreateRelations(ctx context.Context, relations []mo
 // BatchImport 批量导入节点和关系
 func (gs *GraphService) BatchImport(ctx context.Context, nodes []interface{}, relations []model.BaseRelation) error {
 	// 先创建节点
-	if err := gs.BatchCreateNodes(ctx, nodes); err != nil {
+	if _, err := gs.BatchCreateNodesWithMapping(ctx, nodes); err != nil {
 		return fmt.Errorf("failed to create nodes: %w", err)
 	}
 	// 再创建关系
