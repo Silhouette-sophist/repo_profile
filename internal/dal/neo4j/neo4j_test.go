@@ -24,4 +24,11 @@ func TestInit(t *testing.T) {
 	if err = connector.CreateFriendship("one", "two", 2023); err != nil {
 		t.Fatal(err)
 	}
+	persons, err := connector.GetAllPersons()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, person := range persons {
+		t.Logf("person: %v", person)
+	}
 }
