@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	vs "github.com/Silhouette-sophist/repo_profile/parser/visitor"
+	vs "github.com/Silhouette-sophist/repo_profile/internal/parser/visitor"
 	"golang.org/x/mod/modfile"
 )
 
