@@ -166,6 +166,7 @@ func (f *FileFuncVisitor) Visit(node ast.Node) (w ast.Visitor) {
 				return true
 			})
 		}
+		f.ParseFuncBody(funcInfo, n.Body)
 	}
 	return f
 }
@@ -364,6 +365,17 @@ func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt
 				// 2.参数或者返回值或者receiver
 				// 3.包变量
 				// 4.导入包标识
+				if expr, ok := nd.Fun.(*ast.SelectorExpr); ok {
+					if ident, ok := expr.X.(*ast.Ident); ok {
+						name := ident.Name
+						if s, ok := f.ImportPkgMap[name]; ok {
+							info.RelatedCallee[s] = append(info.RelatedCallee[s], &IdentifierIndex{
+								Pkg:  s,
+								Name: name,
+							})
+						}
+					}
+				}
 			}
 		case *ast.Ident:
 			// todo 当前包变量索引，函数指针
