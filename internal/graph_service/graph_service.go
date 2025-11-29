@@ -26,70 +26,76 @@ func TransferGraph(ctx context.Context, repoPath string) {
 		return
 	}
 	for _, module := range repoModules {
-		zap_log.CtxInfo(ctx, "parse module", zap.String("module", module.Path))
-		declares := make([]interface{}, 0)
-		for _, infos := range module.PkgFuncMap {
-			for _, info := range infos {
-				receiver := ""
-				if info.Receiver != nil {
-					receiver = info.Receiver.Name
-				}
-				function := &model.AstFunction{
-					Declaration: model.Declaration{
-						Package:   info.Pkg,
-						Name:      info.Name,
-						File:      &info.RFilePath,
-						StartLine: &info.StartPosition.Line,
-						EndLine:   &info.EndPosition.Line,
-						Content:   info.Content,
-						UniqueId:  generateUniqueId(info.Pkg, receiver, info.Name, "AstFunction"),
-					},
-				}
-				if info.Receiver != nil {
-					function.Receiver = &info.Receiver.BaseType
-				}
-				declares = append(declares, function)
-			}
-		}
-		for _, infos := range module.PkgStructMap {
-			for _, info := range infos {
-				declares = append(declares, &model.AstStruct{
-					Declaration: model.Declaration{
-						Package:   info.Pkg,
-						Name:      info.Name,
-						File:      &info.RFilePath,
-						StartLine: &info.StartPosition.Line,
-						EndLine:   &info.EndPosition.Line,
-						Content:   info.Content,
-						UniqueId:  generateUniqueId(info.Pkg, "", info.Name, "AstStruct"),
-					},
-				})
-			}
-		}
-		for _, infos := range module.PkgVarMap {
-			for _, info := range infos {
-				declares = append(declares, &model.AstVariable{
-					Declaration: model.Declaration{
-						Package:  info.Pkg,
-						Name:     info.Name,
-						File:     &info.RFilePath,
-						Content:  info.Content,
-						UniqueId: generateUniqueId(info.Pkg, "", info.Name, "AstVariable"),
-					},
-				})
-			}
-		}
-		uniqueIdMap, err := graphService.BatchCreateNodesWithMapping(ctx, declares)
-		if err != nil {
-			zap_log.CtxError(ctx, "Failed to create nodes", err, zap.Error(err))
+		if err := HandleSingleModule(ctx, module, graphService); err != nil {
 			return
 		}
-		for id, data := range uniqueIdMap {
-			fmt.Println(id, data)
-		}
-		// 补充边关系 uniqueIdMap
-
 	}
+}
+
+func HandleSingleModule(ctx context.Context, module *service.ModuleInfo, graphService *GraphService) error {
+	zap_log.CtxInfo(ctx, "parse module", zap.String("module", module.Path))
+	declares := make([]interface{}, 0)
+	for _, infos := range module.PkgFuncMap {
+		for _, info := range infos {
+			receiver := ""
+			if info.Receiver != nil {
+				receiver = info.Receiver.Name
+			}
+			function := &model.AstFunction{
+				Declaration: model.Declaration{
+					Package:   info.Pkg,
+					Name:      info.Name,
+					File:      &info.RFilePath,
+					StartLine: &info.StartPosition.Line,
+					EndLine:   &info.EndPosition.Line,
+					Content:   info.Content,
+					UniqueId:  generateUniqueId(info.Pkg, receiver, info.Name, "AstFunction"),
+				},
+			}
+			if info.Receiver != nil {
+				function.Receiver = &info.Receiver.BaseType
+			}
+			declares = append(declares, function)
+		}
+	}
+	for _, infos := range module.PkgStructMap {
+		for _, info := range infos {
+			declares = append(declares, &model.AstStruct{
+				Declaration: model.Declaration{
+					Package:   info.Pkg,
+					Name:      info.Name,
+					File:      &info.RFilePath,
+					StartLine: &info.StartPosition.Line,
+					EndLine:   &info.EndPosition.Line,
+					Content:   info.Content,
+					UniqueId:  generateUniqueId(info.Pkg, "", info.Name, "AstStruct"),
+				},
+			})
+		}
+	}
+	for _, infos := range module.PkgVarMap {
+		for _, info := range infos {
+			declares = append(declares, &model.AstVariable{
+				Declaration: model.Declaration{
+					Package:  info.Pkg,
+					Name:     info.Name,
+					File:     &info.RFilePath,
+					Content:  info.Content,
+					UniqueId: generateUniqueId(info.Pkg, "", info.Name, "AstVariable"),
+				},
+			})
+		}
+	}
+	uniqueIdMap, err := graphService.BatchCreateNodesWithMapping(ctx, declares)
+	if err != nil {
+		zap_log.CtxError(ctx, "Failed to create nodes", err, zap.Error(err))
+		return err
+	}
+	for id, data := range uniqueIdMap {
+		fmt.Println(id, data)
+	}
+	// 补充边关系 uniqueIdMap
+	return nil
 }
 
 // GraphService 处理图数据库操作
