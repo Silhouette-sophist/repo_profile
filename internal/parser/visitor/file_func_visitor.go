@@ -162,9 +162,14 @@ func (f *FileFuncVisitor) Visit(node ast.Node) (w ast.Visitor) {
 				case *ast.FuncLit:
 					childFuncInfo := f.parseAnonymousFuncInfo(nd, funcInfo)
 					f.FileFuncInfos = append(f.FileFuncInfos, childFuncInfo)
+					funcInfo.RelatedCallee[funcInfo.Pkg] = append(funcInfo.RelatedCallee[funcInfo.Pkg], &IdentifierIndex{
+						Pkg:  funcInfo.Pkg,
+						Name: childFuncInfo.Name,
+					})
 				}
 				return true
 			})
+			f.ParseFuncBody(funcInfo, n.Body)
 		}
 	}
 	return f
@@ -342,6 +347,61 @@ func (f *FileFuncVisitor) parseExprBaseType(expr ast.Expr) string {
 	}
 }
 
+// 对于直接标识符调用（如：myFunc()），默认保留，除非是内置函数
+var (
+	builtinFuncs = map[string]bool{
+		"len":    true,
+		"cap":    true,
+		"append": true,
+		"make":   true,
+		"new":    true,
+		"delete": true,
+		// 其他内置函数...
+		"int":     true,
+		"int8":    true,
+		"int16":   true,
+		"int32":   true,
+		"int64":   true,
+		"uint":    true,
+		"uint8":   true,
+		"uint16":  true,
+		"uint32":  true,
+		"uint64":  true,
+		"uintptr": true,
+		"byte":    true,
+		"rune":    true,
+		"float32": true,
+		"float64": true,
+		"string":  true,
+		"bool":    true,
+		"panic":   true,
+		"recover": true,
+	}
+
+	// 定义需要排除的系统包前缀列表
+	systemPackages = map[string]bool{
+		"fmt":     true,
+		"strings": true,
+		"strconv": true,
+		"os":      true,
+		"io":      true,
+		"net":     true,
+		"sync":    true,
+		"time":    true,
+		// 可以根据需要添加更多系统包
+	}
+)
+
+func parseFuncVars(vars []*VarInfo, target string, callback func(varInfo *VarInfo)) bool {
+	for _, varInfo := range vars {
+		if varInfo.Name == target {
+			callback(varInfo)
+			return true
+		}
+	}
+	return false
+}
+
 func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt) {
 	if blockStmt == nil {
 		return
@@ -355,6 +415,9 @@ func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt
 			// todo 函数调用==区分ident和selector
 			switch funId := nd.Fun.(type) {
 			case *ast.Ident:
+				if builtinFuncs[funId.Name] {
+					return true
+				}
 				info.RelatedCallee[info.Pkg] = append(info.RelatedCallee[info.Pkg], &IdentifierIndex{
 					Name: funId.Name,
 					Pkg:  info.Pkg,
@@ -364,6 +427,40 @@ func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt
 				// 2.参数或者返回值或者receiver
 				// 3.包变量
 				// 4.导入包标识
+				if ident, ok := funId.X.(*ast.Ident); ok {
+					name := ident.Name
+					selName := funId.Sel.Name
+					if systemPackages[name] {
+						return true
+					}
+					if info.Receiver != nil && parseFuncVars([]*VarInfo{info.Receiver}, name, func(varInfo *VarInfo) {
+						info.RelatedCallee[info.Pkg] = append(info.RelatedCallee[info.Pkg], &IdentifierIndex{
+							Pkg:      info.Pkg,
+							Name:     selName,
+							Receiver: &varInfo.BaseType,
+						})
+					}) {
+					} else if len(info.Params) > 0 && parseFuncVars(info.Params, name, func(varInfo *VarInfo) {
+						info.RelatedCallee[info.Pkg] = append(info.RelatedCallee[info.Pkg], &IdentifierIndex{
+							Pkg:      varInfo.Pkg,
+							Name:     selName,
+							Receiver: &varInfo.BaseType,
+						})
+					}) {
+					} else if len(info.Results) > 0 && parseFuncVars(info.Results, name, func(varInfo *VarInfo) {
+						info.RelatedCallee[info.Pkg] = append(info.RelatedCallee[info.Pkg], &IdentifierIndex{
+							Pkg:      varInfo.Pkg,
+							Name:     selName,
+							Receiver: &varInfo.BaseType,
+						})
+					}) {
+					} else if s, ok := f.ImportPkgMap[name]; ok {
+						info.RelatedCallee[s] = append(info.RelatedCallee[s], &IdentifierIndex{
+							Pkg:  s,
+							Name: selName,
+						})
+					}
+				}
 			}
 		case *ast.Ident:
 			// todo 当前包变量索引，函数指针
@@ -392,7 +489,6 @@ func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt
 					Name: name,
 				})
 			}
-		case *ast.FuncLit:
 
 		}
 		return true

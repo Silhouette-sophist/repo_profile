@@ -1,52 +1,46 @@
-package neo4j
+package neo4jdb
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"testing"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-const (
-	uri      = "bolt://localhost:7687"
-	userName = "neo4j"
-	password = "chen150928"
-)
-
-// Neo4jConnector 管理 Neo4j 连接
-type Neo4jConnector struct {
-	driver neo4j.DriverWithContext
-	ctx    context.Context
-}
-
-// NewNeo4jConnector 创建新的 Neo4j 连接器
-func NewNeo4jConnector(ctx context.Context) (*Neo4jConnector, error) {
-	// 创建驱动
-	driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(userName, password, ""))
+func TestInit(t *testing.T) {
+	ctx := context.Background()
+	connector, err := NewNeo4jConnector(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("创建驱动失败: %w", err)
+		t.Fatal(err)
 	}
-	// 验证连接
-	err = driver.VerifyConnectivity(ctx)
+	first, err := connector.CreatePersonNode("one", 23)
 	if err != nil {
-		return nil, fmt.Errorf("连接验证失败: %w", err)
+		t.Fatal(err)
 	}
-	return &Neo4jConnector{
-		driver: driver,
-		ctx:    ctx,
-	}, nil
-}
-
-// Close 关闭连接
-func (nc *Neo4jConnector) Close() error {
-	return nc.driver.Close(nc.ctx)
+	t.Logf("first node created: %v", first)
+	second, err := connector.CreatePersonNode("two", 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("second node created: %v", second)
+	if err = connector.CreateFriendship("one", "two", 2023); err != nil {
+		t.Fatal(err)
+	}
+	persons, err := connector.GetAllPersons()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, person := range persons {
+		t.Logf("person: %v", person)
+	}
 }
 
 // CreatePersonNode 创建人物节点
 func (nc *Neo4jConnector) CreatePersonNode(name string, age int) (neo4j.Node, error) {
-	session := nc.driver.NewSession(nc.ctx, neo4j.SessionConfig{})
+	session := nc.Driver.NewSession(nc.ctx, neo4j.SessionConfig{})
 	defer session.Close(nc.ctx)
 
 	result, err := session.ExecuteWrite(nc.ctx, func(tx neo4j.ManagedTransaction) (any, error) {
@@ -85,7 +79,7 @@ func (nc *Neo4jConnector) CreatePersonNode(name string, age int) (neo4j.Node, er
 
 // CreateFriendship 创建朋友关系
 func (nc *Neo4jConnector) CreateFriendship(person1Name, person2Name string, since int) error {
-	session := nc.driver.NewSession(nc.ctx, neo4j.SessionConfig{})
+	session := nc.Driver.NewSession(nc.ctx, neo4j.SessionConfig{})
 	defer session.Close(nc.ctx)
 
 	if _, err := session.ExecuteWrite(nc.ctx, func(tx neo4j.ManagedTransaction) (any, error) {
@@ -112,7 +106,7 @@ func (nc *Neo4jConnector) CreateFriendship(person1Name, person2Name string, sinc
 
 // GetPersonByName 根据名称查询人物
 func (nc *Neo4jConnector) GetPersonByName(name string) (map[string]any, error) {
-	session := nc.driver.NewSession(nc.ctx, neo4j.SessionConfig{})
+	session := nc.Driver.NewSession(nc.ctx, neo4j.SessionConfig{})
 	defer session.Close(nc.ctx)
 
 	result, err := session.ExecuteRead(nc.ctx, func(tx neo4j.ManagedTransaction) (any, error) {
@@ -157,7 +151,7 @@ func (nc *Neo4jConnector) GetPersonByName(name string) (map[string]any, error) {
 
 // GetFriends 获取某人的所有朋友
 func (nc *Neo4jConnector) GetFriends(name string) ([]map[string]any, error) {
-	session := nc.driver.NewSession(nc.ctx, neo4j.SessionConfig{})
+	session := nc.Driver.NewSession(nc.ctx, neo4j.SessionConfig{})
 	defer session.Close(nc.ctx)
 
 	result, err := session.ExecuteRead(nc.ctx, func(tx neo4j.ManagedTransaction) (any, error) {
@@ -194,7 +188,7 @@ func (nc *Neo4jConnector) GetFriends(name string) ([]map[string]any, error) {
 
 // GetAllPersons 获取所有人的列表
 func (nc *Neo4jConnector) GetAllPersons() ([]map[string]any, error) {
-	session := nc.driver.NewSession(nc.ctx, neo4j.SessionConfig{})
+	session := nc.Driver.NewSession(nc.ctx, neo4j.SessionConfig{})
 	defer session.Close(nc.ctx)
 
 	result, err := session.ExecuteRead(nc.ctx, func(tx neo4j.ManagedTransaction) (any, error) {
