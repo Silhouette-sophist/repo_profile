@@ -38,3 +38,7 @@ const (
 	ASSOCIATE  RelationType = "ASSOCIATE"
 	DEPENDENCE RelationType = "DEPENDENCE"
 )
+
+func (receiver RelationType) String() string {
+	return string(receiver)
+}

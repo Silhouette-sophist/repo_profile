@@ -34,6 +34,103 @@ func TransferGraph(ctx context.Context, repoPath string) {
 
 func HandleSingleModule(ctx context.Context, module *service.ModuleInfo, graphService *GraphService) error {
 	zap_log.CtxInfo(ctx, "parse module", zap.String("module", module.Path))
+	// 1.先存储点关系
+	uniqueIdMap, err := SaveModuleNodes(ctx, module, graphService)
+	if err != nil {
+		return err
+	}
+	// 2.补充边关系 uniqueIdMap
+	if err = SaveModuleEdges(ctx, module, uniqueIdMap, graphService); err != nil {
+		return err
+	}
+	return nil
+}
+
+func SaveModuleEdges(ctx context.Context, module *service.ModuleInfo, uniqueIdMap map[string]string, graphService *GraphService) error {
+	relations := make([]model.BaseRelation, 0)
+	for _, infos := range module.PkgFuncMap {
+		for _, info := range infos {
+			callerReceiver := ""
+			if info.Receiver != nil {
+				callerReceiver = info.Receiver.Name
+			}
+			callerUniqueId := generateUniqueId(info.Pkg, callerReceiver, info.Name, "AstFunction")
+			callerElementId, ok := uniqueIdMap[callerUniqueId]
+			if !ok {
+				continue
+			}
+			if len(info.RelatedCallee) > 0 {
+				calleeSet := make(map[string]struct{})
+				for _, indices := range info.RelatedCallee {
+					for _, index := range indices {
+						calleeReceiver := ""
+						if index.Receiver != nil {
+							calleeReceiver = *index.Receiver
+						}
+						calleeUniqueId := generateUniqueId(index.Pkg, calleeReceiver, index.Name, "AstFunction")
+						if _, ok := calleeSet[calleeUniqueId]; ok {
+							continue
+						}
+						if calleeElementId, ok := uniqueIdMap[calleeUniqueId]; ok {
+							relations = append(relations, model.BaseRelation{
+								SourceElementId: callerElementId,
+								TargetElementId: calleeElementId,
+								RelationType:    model.INVOKE.String(),
+							})
+							fmt.Println("invoke caller", callerElementId, "callee:", calleeElementId)
+						}
+						calleeSet[calleeUniqueId] = struct{}{}
+					}
+				}
+			}
+			for _, indices := range info.RelatedPkgStruct {
+				associateSet := make(map[string]struct{})
+				for _, index := range indices {
+					associateId := generateUniqueId(index.Pkg, "", index.Name, "AstStruct")
+					if _, ok := associateSet[associateId]; ok {
+						continue
+					}
+					if s, ok := uniqueIdMap[associateId]; ok {
+						relations = append(relations, model.BaseRelation{
+							SourceElementId: callerElementId,
+							TargetElementId: s,
+							RelationType:    model.ASSOCIATE.String(),
+						})
+						fmt.Println("associate caller", callerElementId, "callee:", s)
+					}
+					associateSet[associateId] = struct{}{}
+				}
+			}
+			for _, indices := range info.RelatedPkgVar {
+				referenceSet := make(map[string]struct{})
+				for _, index := range indices {
+					referenceId := generateUniqueId(index.Pkg, "", index.Name, "AstVariable")
+					if _, ok := referenceSet[referenceId]; ok {
+						continue
+					}
+					if s, ok := uniqueIdMap[referenceId]; ok {
+						relations = append(relations, model.BaseRelation{
+							SourceElementId: callerElementId,
+							TargetElementId: s,
+							RelationType:    model.REFERENCE.String(),
+						})
+						fmt.Println("reference caller", callerElementId, "callee:", s)
+					}
+					referenceSet[referenceId] = struct{}{}
+				}
+			}
+		}
+	}
+	counts, err := graphService.BatchCreateRelations(ctx, relations)
+	if err != nil {
+		zap_log.CtxError(ctx, "Failed to create relations", err, zap.Error(err))
+		return err
+	}
+	fmt.Println(counts)
+	return nil
+}
+
+func SaveModuleNodes(ctx context.Context, module *service.ModuleInfo, graphService *GraphService) (map[string]string, error) {
 	declares := make([]interface{}, 0)
 	for _, infos := range module.PkgFuncMap {
 		for _, info := range infos {
@@ -89,13 +186,10 @@ func HandleSingleModule(ctx context.Context, module *service.ModuleInfo, graphSe
 	uniqueIdMap, err := graphService.BatchCreateNodesWithMapping(ctx, declares)
 	if err != nil {
 		zap_log.CtxError(ctx, "Failed to create nodes", err, zap.Error(err))
-		return err
+		return nil, err
 	}
-	for id, data := range uniqueIdMap {
-		fmt.Println(id, data)
-	}
-	// 补充边关系 uniqueIdMap
-	return nil
+	fmt.Printf("uniqueIdMap: %v\n", uniqueIdMap)
+	return uniqueIdMap, nil
 }
 
 // GraphService 处理图数据库操作
@@ -129,6 +223,7 @@ func generateUniqueId(packageName, receiver, name, label string) string {
 
 // BatchCreateNodesWithMapping 批量创建节点并返回uniqueId到elementId的映射
 func (gs *GraphService) BatchCreateNodesWithMapping(ctx context.Context, nodes []interface{}) (map[string]string, error) {
+	fmt.Printf("BatchCreateNodesWithMapping len %d\n", len(nodes))
 	if len(nodes) == 0 {
 		return map[string]string{}, nil
 	}
@@ -221,32 +316,67 @@ func (gs *GraphService) BatchCreateNodesWithMapping(ctx context.Context, nodes [
 	return idMapping, nil
 }
 
-// BatchCreateRelations 批量创建关系
-func (gs *GraphService) BatchCreateRelations(ctx context.Context, relations []model.BaseRelation) error {
+// BatchCreateRelations 使用 UNWIND 批量创建关系（更高性能）
+func (gs *GraphService) BatchCreateRelations(ctx context.Context, relations []model.BaseRelation) (int, error) {
+	fmt.Printf("BatchCreateRelations len %d\n", len(relations))
 	if len(relations) == 0 {
-		return nil
+		return 0, nil
 	}
 
-	// 构建 CYPHER 查询
-	var cypherParts []string
-	params := make(map[string]interface{})
+	session := gs.connector.Driver.NewSession(ctx, neo4j.SessionConfig{})
+	defer session.Close(ctx)
 
+	// 准备批量参数
+	params := make([]map[string]interface{}, len(relations))
 	for i, rel := range relations {
-		paramKey := fmt.Sprintf("rel%d", i)
-		params[paramKey] = rel
-
-		// 匹配源节点和目标节点，创建关系
-		cypherParts = append(cypherParts,
-			fmt.Sprintf(`MATCH (source {uniqueId: $%s.SourceElementId}), 
-				(target {uniqueId: $%s.TargetElementId}) 
-				MERGE (source)-[:%s]->(target)`,
-				paramKey, paramKey, rel.RelationType))
+		params[i] = map[string]interface{}{
+			"sourceId": rel.SourceElementId,
+			"targetId": rel.TargetElementId,
+			"relType":  rel.RelationType,
+		}
+		fmt.Printf("BatchCreateRelations rel %+v\n", rel)
 	}
 
-	cypher := strings.Join(cypherParts, "\n")
+	// 按关系类型分组处理
+	relGroups := make(map[string][]map[string]interface{})
+	for _, param := range params {
+		relType := param["relType"].(string)
+		if _, ok := relGroups[relType]; !ok {
+			relGroups[relType] = []map[string]interface{}{}
+		}
+		relGroups[relType] = append(relGroups[relType], param)
+	}
 
-	_, err := gs.connector.ExecuteCypher(ctx, cypher, params)
-	return err
+	totalCreated := 0
+
+	// 对每种关系类型执行批量创建
+	for relType, batchParams := range relGroups {
+		// 使用 UNWIND 进行批量操作（修正：使用 elementId 匹配节点）
+		cypher := fmt.Sprintf(`
+    UNWIND $batch AS rel
+    MATCH (source) WHERE elementId(source) = rel.sourceId
+    MATCH (target) WHERE elementId(target) = rel.targetId
+    MERGE (source)-[r:%s]->(target)
+    RETURN COUNT(r) as createdCount
+    `, relType)
+
+		// 执行查询
+		result, err := session.Run(ctx, cypher, map[string]interface{}{
+			"batch": batchParams,
+		})
+		if err != nil {
+			return totalCreated, err
+		}
+
+		// 获取创建的关系数量
+		if record, err := result.Single(ctx); err == nil {
+			if count, ok := record.Get("createdCount"); ok {
+				totalCreated += int(count.(int64))
+			}
+		}
+	}
+	fmt.Printf("Successfully created %d relations out of %d attempted\n", totalCreated, len(relations))
+	return 0, nil
 }
 
 // BatchImport 批量导入节点和关系
@@ -256,8 +386,10 @@ func (gs *GraphService) BatchImport(ctx context.Context, nodes []interface{}, re
 		return fmt.Errorf("failed to create nodes: %w", err)
 	}
 	// 再创建关系
-	if err := gs.BatchCreateRelations(ctx, relations); err != nil {
+	counts, err := gs.BatchCreateRelations(ctx, relations)
+	if err != nil {
 		return fmt.Errorf("failed to create relations: %w", err)
 	}
+	fmt.Printf("Importing %d relations %d\n", len(relations), counts)
 	return nil
 }
