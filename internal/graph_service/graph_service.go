@@ -144,7 +144,7 @@ func SaveModuleNodes(ctx context.Context, module *service.ModuleInfo, graphServi
 					File:      &info.RFilePath,
 					StartLine: &info.StartPosition.Line,
 					EndLine:   &info.EndPosition.Line,
-					Content:   info.Content,
+					Content:   &info.Content,
 					UniqueId:  generateUniqueId(info.Pkg, receiver, info.Name, "AstFunction"),
 				},
 			}
@@ -163,7 +163,7 @@ func SaveModuleNodes(ctx context.Context, module *service.ModuleInfo, graphServi
 					File:      &info.RFilePath,
 					StartLine: &info.StartPosition.Line,
 					EndLine:   &info.EndPosition.Line,
-					Content:   info.Content,
+					Content:   &info.Content,
 					UniqueId:  generateUniqueId(info.Pkg, "", info.Name, "AstStruct"),
 				},
 			})
@@ -176,7 +176,7 @@ func SaveModuleNodes(ctx context.Context, module *service.ModuleInfo, graphServi
 					Package:  info.Pkg,
 					Name:     info.Name,
 					File:     &info.RFilePath,
-					Content:  info.Content,
+					Content:  &info.Content,
 					UniqueId: generateUniqueId(info.Pkg, "", info.Name, "AstVariable"),
 				},
 			})
@@ -187,8 +187,93 @@ func SaveModuleNodes(ctx context.Context, module *service.ModuleInfo, graphServi
 		zap_log.CtxError(ctx, "Failed to create nodes", err, zap.Error(err))
 		return nil, err
 	}
-	fmt.Printf("uniqueIdMap: %v\n", uniqueIdMap)
-	return uniqueIdMap, nil
+	fmt.Printf("uniqueIdMap: %d\n", len(uniqueIdMap))
+	// 补充调用边
+	appendDeclares := make([]interface{}, 0)
+	appendMap := make(map[string]struct{})
+	for _, infos := range module.PkgFuncMap {
+		for _, info := range infos {
+			for _, indices := range info.RelatedCallee {
+				for _, index := range indices {
+					calleeReceiver := ""
+					if index.Receiver != nil {
+						calleeReceiver = *index.Receiver
+					}
+					calleeUniqueId := generateUniqueId(index.Pkg, calleeReceiver, index.Name, "AstFunction")
+					if _, ok := uniqueIdMap[calleeUniqueId]; ok {
+						continue
+					}
+					if _, ok := appendMap[calleeUniqueId]; ok {
+						continue
+					}
+					appendDeclares = append(appendDeclares, &model.AstFunction{
+						Declaration: model.Declaration{
+							Package:  index.Pkg,
+							Name:     index.Name,
+							UniqueId: calleeUniqueId,
+							External: true,
+						},
+						Receiver: &calleeReceiver,
+					})
+					appendMap[calleeUniqueId] = struct{}{}
+				}
+			}
+			for _, indices := range info.RelatedPkgStruct {
+				for _, index := range indices {
+					calleeUniqueId := generateUniqueId(index.Pkg, "", index.Name, "AstStruct")
+					if _, ok := uniqueIdMap[calleeUniqueId]; ok {
+						continue
+					}
+					if _, ok := appendMap[calleeUniqueId]; ok {
+						continue
+					}
+					appendDeclares = append(appendDeclares, &model.AstStruct{
+						Declaration: model.Declaration{
+							Package:  index.Pkg,
+							Name:     index.Name,
+							UniqueId: calleeUniqueId,
+							External: true,
+						},
+					})
+					appendMap[calleeUniqueId] = struct{}{}
+				}
+			}
+			for _, indices := range info.RelatedPkgVar {
+				for _, index := range indices {
+					calleeUniqueId := generateUniqueId(index.Pkg, "", index.Name, "AstVariable")
+					if _, ok := uniqueIdMap[calleeUniqueId]; ok {
+						continue
+					}
+					if _, ok := appendMap[calleeUniqueId]; ok {
+						continue
+					}
+					appendDeclares = append(appendDeclares, &model.AstVariable{
+						Declaration: model.Declaration{
+							Package:  index.Pkg,
+							Name:     index.Name,
+							UniqueId: calleeUniqueId,
+							External: true,
+						},
+					})
+					appendMap[calleeUniqueId] = struct{}{}
+				}
+			}
+		}
+	}
+	uniqueIdMap2, err := graphService.BatchCreateNodesWithMapping(ctx, appendDeclares)
+	if err != nil {
+		zap_log.CtxError(ctx, "Failed to create nodes", err, zap.Error(err))
+		return nil, err
+	}
+	resultMap := make(map[string]string)
+	for s, s2 := range uniqueIdMap {
+		resultMap[s] = s2
+	}
+	for s, s2 := range uniqueIdMap2 {
+		resultMap[s] = s2
+	}
+	fmt.Printf("resultMap: %d\n", len(resultMap))
+	return resultMap, nil
 }
 
 // GraphService 处理图数据库操作
@@ -250,6 +335,7 @@ func (gs *GraphService) BatchCreateNodesWithMapping(ctx context.Context, nodes [
 				"endLine":   n.EndLine,
 				"uniqueId":  n.UniqueId,
 				"receiver":  n.Receiver,
+				"external":  n.External,
 			}
 		case *model.AstStruct:
 			label = "AstStruct"

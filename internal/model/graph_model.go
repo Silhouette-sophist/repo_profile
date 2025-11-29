@@ -4,11 +4,12 @@ type (
 	Declaration struct {
 		Package   string
 		Name      string
-		Content   string
+		UniqueId  string
+		External  bool
+		Content   *string
 		File      *string
 		StartLine *int
 		EndLine   *int
-		UniqueId  string
 	}
 	AstFunction struct {
 		Declaration
