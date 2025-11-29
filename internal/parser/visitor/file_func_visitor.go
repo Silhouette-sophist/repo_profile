@@ -162,11 +162,15 @@ func (f *FileFuncVisitor) Visit(node ast.Node) (w ast.Visitor) {
 				case *ast.FuncLit:
 					childFuncInfo := f.parseAnonymousFuncInfo(nd, funcInfo)
 					f.FileFuncInfos = append(f.FileFuncInfos, childFuncInfo)
+					funcInfo.RelatedCallee[funcInfo.Pkg] = append(funcInfo.RelatedCallee[funcInfo.Pkg], &IdentifierIndex{
+						Pkg:  funcInfo.Pkg,
+						Name: funcInfo.Name,
+					})
 				}
 				return true
 			})
+			f.ParseFuncBody(funcInfo, n.Body)
 		}
-		f.ParseFuncBody(funcInfo, n.Body)
 	}
 	return f
 }
@@ -343,6 +347,51 @@ func (f *FileFuncVisitor) parseExprBaseType(expr ast.Expr) string {
 	}
 }
 
+// 对于直接标识符调用（如：myFunc()），默认保留，除非是内置函数
+var (
+	builtinFuncs = map[string]bool{
+		"len":    true,
+		"cap":    true,
+		"append": true,
+		"make":   true,
+		"new":    true,
+		"delete": true,
+		// 其他内置函数...
+		"int":     true,
+		"int8":    true,
+		"int16":   true,
+		"int32":   true,
+		"int64":   true,
+		"uint":    true,
+		"uint8":   true,
+		"uint16":  true,
+		"uint32":  true,
+		"uint64":  true,
+		"uintptr": true,
+		"byte":    true,
+		"rune":    true,
+		"float32": true,
+		"float64": true,
+		"string":  true,
+		"bool":    true,
+		"panic":   true,
+		"recover": true,
+	}
+
+	// 定义需要排除的系统包前缀列表
+	systemPackages = map[string]bool{
+		"fmt":     true,
+		"strings": true,
+		"strconv": true,
+		"os":      true,
+		"io":      true,
+		"net":     true,
+		"sync":    true,
+		"time":    true,
+		// 可以根据需要添加更多系统包
+	}
+)
+
 func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt) {
 	if blockStmt == nil {
 		return
@@ -356,6 +405,9 @@ func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt
 			// todo 函数调用==区分ident和selector
 			switch funId := nd.Fun.(type) {
 			case *ast.Ident:
+				if builtinFuncs[funId.Name] {
+					return true
+				}
 				info.RelatedCallee[info.Pkg] = append(info.RelatedCallee[info.Pkg], &IdentifierIndex{
 					Name: funId.Name,
 					Pkg:  info.Pkg,
@@ -368,6 +420,9 @@ func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt
 				if expr, ok := nd.Fun.(*ast.SelectorExpr); ok {
 					if ident, ok := expr.X.(*ast.Ident); ok {
 						name := ident.Name
+						if systemPackages[name] {
+							return true
+						}
 						if s, ok := f.ImportPkgMap[name]; ok {
 							info.RelatedCallee[s] = append(info.RelatedCallee[s], &IdentifierIndex{
 								Pkg:  s,
