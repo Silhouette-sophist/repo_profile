@@ -3,7 +3,6 @@ package graph_service
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/Silhouette-sophist/repo_profile/internal/dal/neo4jdb"
@@ -228,12 +227,14 @@ func (gs *GraphService) BatchCreateNodesWithMapping(ctx context.Context, nodes [
 		return map[string]string{}, nil
 	}
 
-	// 构建参数和Cypher语句
-	params := make(map[string]interface{})
-	var mergeClauses []string
-	var returnClauses []string
+	// 将节点按类型分组，以便批量处理
+	type nodeGroup struct {
+		label string
+		nodes []map[string]interface{}
+	}
+	groups := make(map[string]*nodeGroup)
 
-	for i, node := range nodes {
+	for _, node := range nodes {
 		var label string
 		nodeProps := make(map[string]interface{})
 
@@ -275,41 +276,52 @@ func (gs *GraphService) BatchCreateNodesWithMapping(ctx context.Context, nodes [
 		default:
 			return nil, fmt.Errorf("unsupported node type: %T", node)
 		}
-		paramKey := fmt.Sprintf("node%d", i)
-		nodeVar := fmt.Sprintf("n%d", i)
-		params[paramKey] = nodeProps
-		// MERGE并设置属性
-		mergeClauses = append(mergeClauses,
-			fmt.Sprintf(`MERGE (%s:%s {uniqueId: $%s.uniqueId}) 
-				SET %s = $%s`, nodeVar, label, paramKey, nodeVar, paramKey))
-		// 返回每个节点的uniqueId和elementId
-		returnClauses = append(returnClauses,
-			fmt.Sprintf("%s.uniqueId AS uniqueId%d, elementId(%s) AS elementId%d",
-				nodeVar, i, nodeVar, i))
+
+		if _, ok := groups[label]; !ok {
+			groups[label] = &nodeGroup{label: label}
+		}
+		groups[label].nodes = append(groups[label].nodes, nodeProps)
 	}
-	// 构建完整的Cypher查询
-	cypher := strings.Join(mergeClauses, "\n") + "\nRETURN " + strings.Join(returnClauses, ", ")
-	// 执行查询
+
+	idMapping := make(map[string]string)
 	session := gs.connector.Driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer session.Close(ctx)
-	result, err := session.Run(ctx, cypher, params)
-	if err != nil {
-		return nil, err
-	}
-	// 解析结果，构建映射
-	idMapping := make(map[string]string)
-	if record, err := result.Single(ctx); err == nil {
-		for i := range nodes {
-			uniqueIdKey := fmt.Sprintf("uniqueId%d", i)
-			elementIdKey := fmt.Sprintf("elementId%d", i)
 
-			if uniqueId, ok := record.Get(uniqueIdKey); ok {
-				if elementId, ok := record.Get(elementIdKey); ok {
-					idMapping[uniqueId.(string)] = elementId.(string)
-					// 更新缓存
-					gs.idMap.Store(uniqueId.(string), elementId.(string))
+	// 按类型批量处理
+	for _, group := range groups {
+		params := map[string]interface{}{
+			"nodes": group.nodes,
+		}
+
+		// 使用UNWIND批量处理相同类型的节点
+		cypher := fmt.Sprintf(`
+			UNWIND $nodes AS node
+			MERGE (n:%s {uniqueId: node.uniqueId})
+			SET n = node
+			RETURN n.uniqueId AS uniqueId, elementId(n) AS elementId
+		`, group.label)
+
+		result, err := session.Run(ctx, cypher, params)
+		if err != nil {
+			return nil, err
+		}
+
+		// 遍历所有结果记录
+		for result.Next(ctx) {
+			record := result.Record()
+			uniqueId, _ := record.Get("uniqueId")
+			elementId, _ := record.Get("elementId")
+
+			if uIdStr, ok := uniqueId.(string); ok {
+				if eIdStr, ok := elementId.(string); ok {
+					idMapping[uIdStr] = eIdStr
+					gs.idMap.Store(uIdStr, eIdStr)
 				}
 			}
+		}
+
+		if err = result.Err(); err != nil {
+			return nil, err
 		}
 	}
 
