@@ -164,7 +164,7 @@ func (f *FileFuncVisitor) Visit(node ast.Node) (w ast.Visitor) {
 					f.FileFuncInfos = append(f.FileFuncInfos, childFuncInfo)
 					funcInfo.RelatedCallee[funcInfo.Pkg] = append(funcInfo.RelatedCallee[funcInfo.Pkg], &IdentifierIndex{
 						Pkg:  funcInfo.Pkg,
-						Name: funcInfo.Name,
+						Name: childFuncInfo.Name,
 					})
 				}
 				return true
@@ -392,6 +392,16 @@ var (
 	}
 )
 
+func parseFuncVars(vars []*VarInfo, target string, callback func(varInfo *VarInfo)) bool {
+	for _, varInfo := range vars {
+		if varInfo.Name == target {
+			callback(varInfo)
+			return true
+		}
+	}
+	return false
+}
+
 func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt) {
 	if blockStmt == nil {
 		return
@@ -417,18 +427,38 @@ func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt
 				// 2.参数或者返回值或者receiver
 				// 3.包变量
 				// 4.导入包标识
-				if expr, ok := nd.Fun.(*ast.SelectorExpr); ok {
-					if ident, ok := expr.X.(*ast.Ident); ok {
-						name := ident.Name
-						if systemPackages[name] {
-							return true
-						}
-						if s, ok := f.ImportPkgMap[name]; ok {
-							info.RelatedCallee[s] = append(info.RelatedCallee[s], &IdentifierIndex{
-								Pkg:  s,
-								Name: name,
-							})
-						}
+				if ident, ok := funId.X.(*ast.Ident); ok {
+					name := ident.Name
+					selName := funId.Sel.Name
+					if systemPackages[name] {
+						return true
+					}
+					if info.Receiver != nil && parseFuncVars([]*VarInfo{info.Receiver}, name, func(varInfo *VarInfo) {
+						info.RelatedCallee[info.Pkg] = append(info.RelatedCallee[info.Pkg], &IdentifierIndex{
+							Pkg:      info.Pkg,
+							Name:     selName,
+							Receiver: &varInfo.BaseType,
+						})
+					}) {
+					} else if len(info.Params) > 0 && parseFuncVars(info.Params, name, func(varInfo *VarInfo) {
+						info.RelatedCallee[info.Pkg] = append(info.RelatedCallee[info.Pkg], &IdentifierIndex{
+							Pkg:      varInfo.Pkg,
+							Name:     selName,
+							Receiver: &varInfo.BaseType,
+						})
+					}) {
+					} else if len(info.Results) > 0 && parseFuncVars(info.Results, name, func(varInfo *VarInfo) {
+						info.RelatedCallee[info.Pkg] = append(info.RelatedCallee[info.Pkg], &IdentifierIndex{
+							Pkg:      varInfo.Pkg,
+							Name:     selName,
+							Receiver: &varInfo.BaseType,
+						})
+					}) {
+					} else if s, ok := f.ImportPkgMap[name]; ok {
+						info.RelatedCallee[s] = append(info.RelatedCallee[s], &IdentifierIndex{
+							Pkg:  s,
+							Name: selName,
+						})
 					}
 				}
 			}
@@ -459,7 +489,6 @@ func (f *FileFuncVisitor) ParseFuncBody(info *FuncInfo, blockStmt *ast.BlockStmt
 					Name: name,
 				})
 			}
-		case *ast.FuncLit:
 
 		}
 		return true
